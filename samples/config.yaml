@@ -1,0 +1,15 @@
+# サンプル（モック）で試すための設定. backlog-report -c samples/config.yaml report
+backlog:
+  space_url: https://example.backlog.com
+  project_key: SAMPLE
+  mock_dir: backlog
+report:
+  done_statuses: [完了]
+  due_soon_days: 3
+  output_dir: ../output
+  snapshot_file: ../data/snapshots.csv
+  today: 2026-10-02
+slack:
+  channel: C0000000000
+wiki:
+  page: 進捗レポート/最新
