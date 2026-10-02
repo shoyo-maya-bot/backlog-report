@@ -1,0 +1,36 @@
+# 定期実行の例（GitHub Actions）. 使うときは .github/workflows/ にコピーし、リポジトリの Secrets に
+# BACKLOG_API_KEY と SLACK_BOT_TOKEN を登録する。config.yaml の代わりに、この例では config.ci.yaml をコミットして使う。
+name: weekly-progress-report
+
+on:
+  schedule:
+    - cron: "50 23 * * 0"   # 月曜 8:50（日本時間）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
+      - run: pip install -e .
+      # バーンダウンの実績（data/snapshots.csv）を前回から引き継ぐ
+      - uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: snapshots-${{ github.run_id }}
+          restore-keys: snapshots-
+      - run: backlog-report -c config.ci.yaml batch --slack --wiki
+        env:
+          BACKLOG_API_KEY: ${{ secrets.BACKLOG_API_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      - uses: actions/cache/save@v4
+        with:
+          path: data
+          key: snapshots-${{ github.run_id }}

@@ -1,0 +1,532 @@
+[
+ {
+  "id": 50001,
+  "issueKey": "SAMPLE-1",
+  "summary": "要件の確認会",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 4,
+   "name": "完了"
+  },
+  "assignee": {
+   "name": "担当A"
+  },
+  "startDate": "2026-09-02T00:00:00Z",
+  "dueDate": "2026-09-07T00:00:00Z",
+  "estimatedHours": 8,
+  "actualHours": 8,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-07T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50002,
+  "issueKey": "SAMPLE-2",
+  "summary": "会員 API の基本設計",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 4,
+   "name": "完了"
+  },
+  "assignee": {
+   "name": "担当A"
+  },
+  "startDate": "2026-09-08T00:00:00Z",
+  "dueDate": "2026-09-17T00:00:00Z",
+  "estimatedHours": 24,
+  "actualHours": 28,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-18T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50003,
+  "issueKey": "SAMPLE-3",
+  "summary": "注文 API の基本設計",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 4,
+   "name": "完了"
+  },
+  "assignee": {
+   "name": "担当B"
+  },
+  "startDate": "2026-09-08T00:00:00Z",
+  "dueDate": "2026-09-20T00:00:00Z",
+  "estimatedHours": 24,
+  "actualHours": 22,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-20T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50004,
+  "issueKey": "SAMPLE-4",
+  "summary": "注文取込バッチの基本設計",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 4,
+   "name": "完了"
+  },
+  "assignee": {
+   "name": "担当C"
+  },
+  "startDate": "2026-09-12T00:00:00Z",
+  "dueDate": "2026-09-22T00:00:00Z",
+  "estimatedHours": 16,
+  "actualHours": 20,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-23T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50005,
+  "issueKey": "SAMPLE-5",
+  "summary": "画面の基本設計",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 3,
+   "name": "処理済み"
+  },
+  "assignee": {
+   "name": "担当B"
+  },
+  "startDate": "2026-09-14T00:00:00Z",
+  "dueDate": "2026-09-27T00:00:00Z",
+  "estimatedHours": 32,
+  "actualHours": 30,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-29T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50006,
+  "issueKey": "SAMPLE-6",
+  "summary": "設計レビューの指摘対応",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 2,
+   "name": "処理中"
+  },
+  "assignee": {
+   "name": "担当A"
+  },
+  "startDate": "2026-09-26T00:00:00Z",
+  "dueDate": "2026-10-01T00:00:00Z",
+  "estimatedHours": 12,
+  "actualHours": 6,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-10-01T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50007,
+  "issueKey": "SAMPLE-7",
+  "summary": "非機能要件の整理",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当C"
+  },
+  "startDate": "2026-09-24T00:00:00Z",
+  "dueDate": "2026-09-30T00:00:00Z",
+  "estimatedHours": 8,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 1,
+    "name": "フェーズ1 設計"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-24T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50008,
+  "issueKey": "SAMPLE-8",
+  "summary": "会員 API の実装",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 2,
+   "name": "処理中"
+  },
+  "assignee": {
+   "name": "担当A"
+  },
+  "startDate": "2026-09-29T00:00:00Z",
+  "dueDate": "2026-10-08T00:00:00Z",
+  "estimatedHours": 32,
+  "actualHours": 10,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-10-01T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50009,
+  "issueKey": "SAMPLE-9",
+  "summary": "会員 API の単体テスト",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当A"
+  },
+  "startDate": "2026-10-06T00:00:00Z",
+  "dueDate": "2026-10-11T00:00:00Z",
+  "estimatedHours": 16,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-22T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50010,
+  "issueKey": "SAMPLE-10",
+  "summary": "注文 API の実装",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 2,
+   "name": "処理中"
+  },
+  "assignee": {
+   "name": "担当B"
+  },
+  "startDate": "2026-09-30T00:00:00Z",
+  "dueDate": "2026-10-10T00:00:00Z",
+  "estimatedHours": 40,
+  "actualHours": 6,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-10-02T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50011,
+  "issueKey": "SAMPLE-11",
+  "summary": "注文 API の単体テスト",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当B"
+  },
+  "startDate": "2026-10-09T00:00:00Z",
+  "dueDate": "2026-10-14T00:00:00Z",
+  "estimatedHours": 16,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-22T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50012,
+  "issueKey": "SAMPLE-12",
+  "summary": "注文取込バッチの実装",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当C"
+  },
+  "startDate": "2026-10-01T00:00:00Z",
+  "dueDate": "2026-10-12T00:00:00Z",
+  "estimatedHours": 32,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-22T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50013,
+  "issueKey": "SAMPLE-13",
+  "summary": "バッチの再実行テスト",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当C"
+  },
+  "startDate": "2026-10-11T00:00:00Z",
+  "dueDate": "2026-10-16T00:00:00Z",
+  "estimatedHours": 8,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-22T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50014,
+  "issueKey": "SAMPLE-14",
+  "summary": "ローカル環境の手順書",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 4,
+   "name": "完了"
+  },
+  "assignee": {
+   "name": "担当D"
+  },
+  "startDate": "2026-09-27T00:00:00Z",
+  "dueDate": "2026-09-30T00:00:00Z",
+  "estimatedHours": 6,
+  "actualHours": 5,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-30T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50015,
+  "issueKey": "SAMPLE-15",
+  "summary": "CI のゲート設定",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 2,
+   "name": "処理中"
+  },
+  "assignee": {
+   "name": "担当D"
+  },
+  "startDate": "2026-09-30T00:00:00Z",
+  "dueDate": "2026-10-04T00:00:00Z",
+  "estimatedHours": 10,
+  "actualHours": 6,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-10-02T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50016,
+  "issueKey": "SAMPLE-16",
+  "summary": "検証環境の構築",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当D"
+  },
+  "startDate": "2026-10-03T00:00:00Z",
+  "dueDate": "2026-10-07T00:00:00Z",
+  "estimatedHours": 16,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-22T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50017,
+  "issueKey": "SAMPLE-17",
+  "summary": "ログイン時のエラー表示が崩れる",
+  "issueType": {
+   "name": "バグ"
+  },
+  "status": {
+   "id": 2,
+   "name": "処理中"
+  },
+  "assignee": {
+   "name": "担当B"
+  },
+  "startDate": "2026-09-30T00:00:00Z",
+  "dueDate": "2026-10-03T00:00:00Z",
+  "estimatedHours": 2,
+  "actualHours": 1,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-10-02T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50018,
+  "issueKey": "SAMPLE-18",
+  "summary": "会員検索で 0 件のときに 500 になる",
+  "issueType": {
+   "name": "バグ"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": null,
+  "startDate": "2026-10-01T00:00:00Z",
+  "dueDate": "2026-10-05T00:00:00Z",
+  "estimatedHours": 3,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-10-01T18:00:00Z",
+  "parentIssueId": null
+ },
+ {
+  "id": 50019,
+  "issueKey": "SAMPLE-19",
+  "summary": "性能テストの計画",
+  "issueType": {
+   "name": "タスク"
+  },
+  "status": {
+   "id": 1,
+   "name": "未対応"
+  },
+  "assignee": {
+   "name": "担当C"
+  },
+  "startDate": null,
+  "dueDate": null,
+  "estimatedHours": 8,
+  "actualHours": 0,
+  "milestone": [
+   {
+    "id": 2,
+    "name": "フェーズ2 製造"
+   }
+  ],
+  "created": "2026-08-28T09:00:00Z",
+  "updated": "2026-09-22T18:00:00Z",
+  "parentIssueId": null
+ }
+]

@@ -1,0 +1,26 @@
+[
+ {
+  "id": 1,
+  "projectId": 1001,
+  "name": "フェーズ1 設計",
+  "startDate": "2026-09-02T00:00:00Z",
+  "releaseDueDate": "2026-10-01T00:00:00Z",
+  "archived": false
+ },
+ {
+  "id": 2,
+  "projectId": 1001,
+  "name": "フェーズ2 製造",
+  "startDate": "2026-09-27T00:00:00Z",
+  "releaseDueDate": "2026-10-17T00:00:00Z",
+  "archived": false
+ },
+ {
+  "id": 3,
+  "projectId": 1001,
+  "name": "フェーズ0 準備（終了）",
+  "startDate": "2026-08-03T00:00:00Z",
+  "releaseDueDate": "2026-09-01T00:00:00Z",
+  "archived": true
+ }
+]
