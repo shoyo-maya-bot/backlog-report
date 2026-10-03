@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "backlog-report"
 version = "0.1.0"
 description = "Backlog の課題から進捗レポート（遅延・担当者別・ガント・バーンダウン）を作り、Slack と Backlog Wiki に届ける"
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
