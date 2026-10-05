@@ -67,3 +67,8 @@ ruff check . && ruff format --check . && pytest
 ```
 
 テストはモックと偽の HTTP で動き、Backlog・Slack には接続しません。
+
+## セキュリティ・ライセンス
+
+- 脆弱性を見つけたら、公開の Issue ではなく [SECURITY.md](SECURITY.md) の方法で知らせてください
+- ライセンスは [MIT](LICENSE) です
