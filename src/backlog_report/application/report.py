@@ -45,7 +45,7 @@ def build(port: BacklogPort, st: Settings, *, milestone: str = "", assignee: str
     if assignee:
         issues = [i for i in issues if i.assignee == assignee]
     first = "未対応"
-    s = summarize(issues, milestones, today, st.done_statuses, st.due_soon_days, first)
+    s = summarize(issues, milestones, today, st.done_statuses, st.due_soon_days, first, st.parent_child)
     return Report(s, st.project_key, issues, milestones)
 
 

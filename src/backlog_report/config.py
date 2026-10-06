@@ -24,6 +24,7 @@ class Settings:
     done_statuses: list[str] = field(default_factory=lambda: ["完了"])
     milestones: list[str] = field(default_factory=list)  # 空ならすべて
     due_soon_days: int = 3
+    parent_child: str = "children"  # 完了率の数え方: children（子課題だけ）/ parents（親課題だけ）/ both（両方）
     completion_date: str = "updated"  # 完了日の推定: updated（最終更新日）
     output_dir: str = "output"
     snapshot_file: str = "data/snapshots.csv"
@@ -53,6 +54,7 @@ def load_settings(path: Path) -> Settings:
         done_statuses=list(r.get("done_statuses", ["完了"])),
         milestones=[str(m) for m in r.get("milestones", []) or []],
         due_soon_days=int(r.get("due_soon_days", 3)),
+        parent_child=str(r.get("parent_child", "children")),
         completion_date=str(r.get("completion_date", "updated")),
         output_dir=str(r.get("output_dir", "output")),
         snapshot_file=str(r.get("snapshot_file", "data/snapshots.csv")),
@@ -62,6 +64,8 @@ def load_settings(path: Path) -> Settings:
     )
     if r.get("today"):
         st.today = date.fromisoformat(str(r["today"]))
+    if st.parent_child not in ("children", "parents", "both"):
+        raise ValueError(f"report.parent_child は children / parents / both のどれかです: {st.parent_child}")
     if not st.project_key:
         raise ValueError("backlog.project_key が必要です")
     if not st.mock_dir and not st.space_url.startswith("https://"):

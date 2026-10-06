@@ -61,6 +61,28 @@ def is_done(issue: Issue, done_statuses: list[str]) -> bool:
     return issue.status in done_statuses
 
 
+PARENT_CHILD_MODES = ("children", "parents", "both")
+
+
+def countable(issues: list[Issue], mode: str = "children") -> list[Issue]:
+    """完了率の件数・見積時間に数える課題. 親課題と子課題を二重に数えないようにする.
+
+    - children（既定）: 子課題が結果にある親課題を除く（作業は子課題が持つ）
+    - parents: 親課題が結果にある子課題を除く（親課題の単位で数える）
+    - both: すべて数える（従来の動き）
+    結果に子課題がない親・結果に親課題がない子は、どのモードでも数える。
+    """
+    if mode not in PARENT_CHILD_MODES:
+        raise ValueError(f"parent_child は {' / '.join(PARENT_CHILD_MODES)} のどれかです: {mode}")
+    if mode == "both":
+        return list(issues)
+    keys = {i.key for i in issues}
+    if mode == "parents":
+        return [i for i in issues if i.parent_key not in keys]
+    parents = {i.parent_key for i in issues if i.parent_key in keys}
+    return [i for i in issues if i.key not in parents]
+
+
 def summarize(
     issues: list[Issue],
     milestones: list[Milestone],
@@ -68,8 +90,10 @@ def summarize(
     done_statuses: list[str],
     due_soon_days: int = 3,
     first_status: str = "未対応",
+    parent_child: str = "children",
 ) -> Summary:
-    s = Summary(today, len(issues), sum(is_done(i, done_statuses) for i in issues))
+    counted = countable(issues, parent_child)  # 完了率の分母・分子（親子を二重に数えない）
+    s = Summary(today, len(counted), sum(is_done(i, done_statuses) for i in counted))
     for i in issues:
         if is_done(i, done_statuses):
             continue
@@ -85,7 +109,7 @@ def summarize(
     s.due_soon.sort(key=lambda i: (i.due or today, i.key))
 
     by_ms: dict[str, list[Issue]] = defaultdict(list)
-    for i in issues:
+    for i in counted:
         for m in i.milestones:
             by_ms[m].append(i)
     for m in milestones:

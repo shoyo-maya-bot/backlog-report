@@ -54,8 +54,9 @@ def issue(
     est: float | None = 4,
     upd: date = TODAY,
     who: str = "A",
+    parent: str = "",
 ) -> Issue:
-    return Issue(key, key, status, who, "タスク", (ms,), start, due, est, 0, date(2026, 9, 1), upd)
+    return Issue(key, key, status, who, "タスク", (ms,), start, due, est, 0, date(2026, 9, 1), upd, parent)
 
 
 # --- ドメイン ----------------------------------------------------------------------------------
@@ -80,6 +81,48 @@ def test_summarize_classifies_delay_and_due_soon():
     assert m.expected_ratio(TODAY) == pytest.approx(31 / 60)
     names = [a.name for a in s.assignees]
     assert names[0] == "A" and "（未割当）" in names
+
+
+def _parent_and_children() -> list[Issue]:
+    return [
+        issue("P", est=12),  # 親課題（作業は子課題が持つ）
+        issue("C1", status="完了", parent="P"),
+        issue("C2", status="完了", parent="P"),
+        issue("C3", parent="P"),
+    ]
+
+
+def test_summarize_excludes_parents_with_children_by_default():
+    ms = [Milestone("M1", date(2026, 9, 1), date(2026, 10, 31))]
+    s = summarize(_parent_and_children(), ms, TODAY, ["完了"])
+    m = s.milestones[0]
+    assert (s.total, s.done) == (3, 2)  # 親を数えると 4 件中 2 件（50%）になってしまう
+    assert (m.total, m.done, m.estimated, m.done_estimated) == (3, 2, 12, 8)
+    assert m.ratio == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize(("mode", "total", "done"), [("children", 3, 2), ("parents", 1, 0), ("both", 4, 2)])
+def test_summarize_parent_child_modes(mode: str, total: int, done: int):
+    ms = [Milestone("M1", date(2026, 9, 1), date(2026, 10, 31))]
+    s = summarize(_parent_and_children(), ms, TODAY, ["完了"], parent_child=mode)
+    assert (s.total, s.done) == (total, done)
+    assert (s.milestones[0].total, s.milestones[0].done) == (total, done)
+
+
+def test_parent_whose_children_are_outside_result_counts_as_issue():
+    s = summarize([issue("P"), issue("Q", parent="OTHER")], [], TODAY, ["完了"])
+    assert s.total == 2  # 結果に子課題がない親・結果に親がない子はそのまま数える
+
+
+def test_config_parent_child(tmp_path: Path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("backlog: {project_key: X, mock_dir: m}\nreport: {parent_child: parents}\n", encoding="utf-8")
+    assert load_settings(cfg).parent_child == "parents"
+    cfg.write_text("backlog: {project_key: X, mock_dir: m}\n", encoding="utf-8")
+    assert load_settings(cfg).parent_child == "children"
+    cfg.write_text("backlog: {project_key: X, mock_dir: m}\nreport: {parent_child: all}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="parent_child"):
+        load_settings(cfg)
 
 
 def test_burndown_uses_snapshots_then_updates():
