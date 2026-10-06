@@ -24,7 +24,8 @@ class Settings:
     done_statuses: list[str] = field(default_factory=lambda: ["完了"])
     milestones: list[str] = field(default_factory=list)  # 空ならすべて
     due_soon_days: int = 3
-    parent_child: str = "children"  # 完了率の数え方: children（子課題だけ）/ parents（親課題だけ）/ both（両方）
+    # 完了率・バーンダウン・担当者別の残り時間の数え方: children（子課題だけ）/ parents（親課題だけ）/ both（両方）
+    parent_child: str = "children"
     completion_date: str = "updated"  # 完了日の推定: updated（最終更新日）
     output_dir: str = "output"
     snapshot_file: str = "data/snapshots.csv"

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..config import Settings
 from ..domain.model import Issue, Milestone
-from ..domain.progress import Summary, burndown, is_done, summarize
+from ..domain.progress import Summary, burndown, countable, is_done, snapshot_gaps, summarize
 from ..infrastructure import snapshots
 from ..infrastructure.backlog import BacklogPort, load_all
 from ..infrastructure.slack import SlackClient
@@ -24,6 +24,7 @@ class Report:
     milestones: list[Milestone]
     markdown: str = ""
     files: dict[str, Path] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _slug(s: str) -> str:
@@ -60,7 +61,11 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
         snap = Path(st.snapshot_file)
         for m in r.milestones:
             unit = "hours" if any(i.estimated_hours for i in r.issues if m.name in i.milestones) else "count"
-            pts = burndown(r.issues, m, r.summary.today, st.done_statuses, unit=unit, snapshots=snapshots.load(snap, m.name, unit))
+            history = snapshots.load(snap, m.name, unit)
+            gaps = snapshot_gaps(history, m, r.summary.today)
+            if gaps:
+                r.warnings.append(_gap_message(m.name, gaps))
+            pts = burndown(r.issues, m, r.summary.today, st.done_statuses, unit=unit, snapshots=history, parent_child=st.parent_child)
             b = charts.burndown(
                 pts,
                 out_dir / f"burndown_{_slug(m.name)}.png",
@@ -77,10 +82,19 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
     return r
 
 
+def _gap_message(name: str, gaps: list[tuple[date, date]]) -> str:
+    days = sum((b - a).days + 1 for a, b in gaps)
+    spans = "、".join(str(a) if a == b else f"{a}〜{b}" for a, b in gaps[:5]) + ("、…" if len(gaps) > 5 else "")
+    return (
+        f"バーンダウン {name}: 記録がない日が {days} 日（{spans}）。その日の実績は課題の最終更新日からの推定です"
+        "（記録ファイルが消えていないか、毎日実行できているか確認してください）"
+    )
+
+
 def record_snapshot(r: Report, st: Settings) -> None:
     rows = []
     for m in r.milestones:
-        group = [i for i in r.issues if m.name in i.milestones]
+        group = [i for i in countable(r.issues, st.parent_child) if m.name in i.milestones]
         open_ = [i for i in group if not is_done(i, st.done_statuses)]
         rows.append((m.name, len(open_), sum(i.estimated_hours or 0 for i in open_)))
     if rows:

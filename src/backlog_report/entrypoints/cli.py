@@ -100,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
             if not args.no_snapshot:
                 report.record_snapshot(r, st)
             print(f"レポート: {r.files['markdown']}（グラフ {len(r.files) - 1} 枚）")
+            for w in r.warnings:
+                print(f"警告: {w}", file=sys.stderr)
             if args.slack:
                 client = SlackClient(bot_token=_opt("SLACK_BOT_TOKEN"), webhook_url=_opt("SLACK_WEBHOOK_URL"))
                 report.post_slack(r, st, client)

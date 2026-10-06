@@ -2,6 +2,8 @@
 
 - Webhook: 文章とブロックだけ（画像は送れない）
 - Bot トークン（chat:write, files:write）: 投稿と画像のアップロード（files.getUploadURLExternal → completeUploadExternal）
+
+送信はすべて POST なので再試行しない（届いていた場合に、同じ投稿や画像が二重になるため）。失敗はそのままエラーにする。
 """
 
 from __future__ import annotations
@@ -13,12 +15,18 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from devtools_common.httpclient import safe_urlopen
+
 API = "https://slack.com/api"
 Http = Callable[[urllib.request.Request], dict[str, Any]]
 
 
+_urlopen = safe_urlopen  # 別のオリジンへのリダイレクトでは認証ヘッダーを外す
+
+
 def _default_http(req: urllib.request.Request) -> dict[str, Any]:
-    with urllib.request.urlopen(req, timeout=30) as res:  # noqa: S310 — Slack の固定 URL か設定の Webhook
+    """1 回だけ送る（POST は再試行しない）."""
+    with _urlopen(req, timeout=30) as res:  # Slack の固定 URL か設定の Webhook
         body = res.read().decode("utf-8")
     try:
         return json.loads(body)

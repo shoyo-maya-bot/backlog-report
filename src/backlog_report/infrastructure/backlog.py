@@ -2,16 +2,24 @@
 
 BacklogApi は本物の API（HTTPS・API キー）、MockBacklog は同じ形の JSON ファイルを読む（試行・テスト用）。
 どちらも同じメソッドを持つので、アプリケーション層はどちらを使っているかを知らない。
+
+読み取り（GET）は devtools_common の HttpClient で送り、429 / 5xx / 通信エラーを待ってから再試行する。
+書き込み（Wiki の POST / PATCH）は二重に登録・更新しないよう、再試行せず 1 回だけ送る。
 """
 
 from __future__ import annotations
 
 import json
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Protocol
+
+from devtools_common.httpclient import HttpClient, HttpError, safe_urlopen
 
 from ..domain.model import Issue, Milestone
 
@@ -27,21 +35,44 @@ class BacklogPort(Protocol):
 class BacklogApi:
     PAGE = 100
 
-    def __init__(self, space_url: str, project_key: str, api_key: str, timeout: int = 30):
+    def __init__(
+        self,
+        space_url: str,
+        project_key: str,
+        api_key: str,
+        timeout: int = 30,
+        *,
+        opener: Callable[..., Any] = safe_urlopen,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         self.base = space_url.rstrip("/") + "/api/v2"
         self.project_key = project_key
         self.api_key = api_key
         self.timeout = timeout
+        self._opener = opener
+        # Backlog の API は 1 分あたりの回数に上限がある. 429 は Retry-After（無ければ指数バックオフ）だけ待って再試行する
+        self._http = HttpClient(self.base, rate_per_sec=2.0, timeout=timeout, opener=opener, sleep=sleep)
         self._project: dict[str, Any] | None = None
 
     def _call(self, method: str, path: str, params: list[tuple[str, Any]] | None = None, form: dict[str, Any] | None = None) -> Any:
-        query = urllib.parse.urlencode([("apiKey", self.api_key), *(params or [])])
-        data = urllib.parse.urlencode(form).encode() if form is not None else None
-        req = urllib.request.Request(f"{self.base}{path}?{query}", data=data, method=method)
-        if data is not None:
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urllib.request.urlopen(req, timeout=self.timeout) as res:  # noqa: S310 — https の設定値のみ
-            return json.loads(res.read().decode("utf-8"))
+        query = [("apiKey", self.api_key), *(params or [])]
+        if method == "GET":
+            return self._http.get(path, params=query).json()  # type: ignore[arg-type]  # 同じ名前の項目（projectId[]）を並べるため組の列
+        return self._write(method, path, query, form or {})
+
+    def _write(self, method: str, path: str, query: list[tuple[str, Any]], form: dict[str, Any]) -> Any:
+        """POST / PATCH は 1 回だけ送る（失敗しても再試行しない. 届いていれば二重に登録・更新してしまうため）."""
+        url = f"{self.base}{path}?{urllib.parse.urlencode(query)}"
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(form).encode(), method=method)
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        req.add_header("Accept", "application/json")
+        try:
+            with self._opener(req, timeout=self.timeout) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise HttpError(e.code, f"{method} {path} が失敗しました（再試行していません）: {e.reason or ''}") from None
+        except (urllib.error.URLError, TimeoutError) as e:
+            raise HttpError(None, f"{method} {path} が失敗しました（再試行していません）: {getattr(e, 'reason', e)}") from None
 
     def project(self) -> dict[str, Any]:
         if self._project is None:

@@ -1,14 +1,24 @@
 # 定期実行の例（GitHub Actions）. 使うときは .github/workflows/ にコピーし、リポジトリの Secrets に
 # BACKLOG_API_KEY と SLACK_BOT_TOKEN を登録する。config.yaml の代わりに、この例では config.ci.yaml をコミットして使う。
-name: weekly-progress-report
+#
+# バーンダウンの実績（data/snapshots.csv）は、専用のブランチ report-data にコミットして残す（無料・期限なし）。
+# Actions のキャッシュは 7 日使わないと消えるので、記録の置き場所には使わない。
+# - 毎日実行して残量を記録し、Slack と Wiki へは月曜（と手動実行のとき）だけ送る
+# - リポジトリへの書き込み（contents: write）は、記録をコミットする save-snapshots ジョブだけに与える。
+#   Backlog・Slack の秘密情報を使う report ジョブは読み取りだけ
+name: progress-report
 
 on:
   schedule:
-    - cron: "50 23 * * 0"   # 月曜 8:50（日本時間）
+    - cron: "50 23 * * *"   # 毎日 8:50（日本時間）
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: progress-report   # 記録のコミットが重ならないよう、同時には 1 つだけ動かす
+  cancel-in-progress: false
 
 jobs:
   report:
@@ -20,17 +30,56 @@ jobs:
           python-version: "3.12"
       - run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
       - run: pip install -e .
-      # バーンダウンの実績（data/snapshots.csv）を前回から引き継ぐ
-      - uses: actions/cache/restore@v4
-        with:
-          path: data
-          key: snapshots-${{ github.run_id }}
-          restore-keys: snapshots-
-      - run: backlog-report -c config.ci.yaml batch --slack --wiki
+      # 前回までの記録を report-data ブランチから取り出す（初回はブランチが無いので空から始める）
+      - name: restore snapshots
+        run: |
+          mkdir -p data
+          if git fetch --depth=1 origin report-data; then
+            git show FETCH_HEAD:snapshots.csv > data/snapshots.csv
+          else
+            echo "::notice::report-data ブランチがまだありません（初回）。記録を新しく作ります"
+          fi
+      - name: report
+        run: |
+          flags=""
+          if [ "$(TZ=Asia/Tokyo date +%u)" = 1 ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            flags="--slack --wiki"
+          fi
+          backlog-report -c config.ci.yaml batch $flags
         env:
           BACKLOG_API_KEY: ${{ secrets.BACKLOG_API_KEY }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-      - uses: actions/cache/save@v4
+      - uses: actions/upload-artifact@v4
         with:
-          path: data
-          key: snapshots-${{ github.run_id }}
+          name: snapshots
+          path: data/snapshots.csv
+          if-no-files-found: error
+          retention-days: 1   # 次のジョブへ渡すだけ. 保管は report-data ブランチ
+
+  save-snapshots:
+    needs: report
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # report-data ブランチへの push だけに使う
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: snapshots
+          path: ${{ runner.temp }}/snapshots
+      - name: commit snapshots to report-data
+        run: |
+          if git fetch --depth=1 origin report-data; then
+            git switch -c report-data FETCH_HEAD
+          else
+            git switch --orphan report-data   # 初回: 履歴のない空のブランチを作る
+          fi
+          cp "$RUNNER_TEMP/snapshots/snapshots.csv" snapshots.csv
+          git add snapshots.csv
+          if git diff --cached --quiet; then
+            echo "記録に変更はありません"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "data: バーンダウンの記録 $(TZ=Asia/Tokyo date +%F)"
+          git push origin report-data

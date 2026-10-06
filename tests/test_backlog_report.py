@@ -7,21 +7,25 @@ import importlib.util
 import io
 import json
 import shutil
+import urllib.error
+import urllib.request
 from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 from devtools_common.cli import run_main
+from devtools_common.httpclient import HttpError
 
 from backlog_report.application import report
 from backlog_report.config import load_settings
 from backlog_report.domain.model import Issue, Milestone
-from backlog_report.domain.progress import burndown, summarize
+from backlog_report.domain.progress import burndown, snapshot_gaps, summarize
 from backlog_report.entrypoints import slack_bot
 from backlog_report.entrypoints.cli import main
 from backlog_report.infrastructure import snapshots
 from backlog_report.infrastructure.backlog import BacklogApi, MockBacklog, load_all
-from backlog_report.infrastructure.slack import SlackClient, SlackError
+from backlog_report.infrastructure.slack import SlackClient, SlackError, _default_http
 
 ROOT = Path(__file__).resolve().parent.parent
 TODAY = date(2026, 10, 2)
@@ -136,6 +140,68 @@ def test_burndown_uses_snapshots_then_updates():
     assert burndown(issues, Milestone("M1", None, None), TODAY, ["完了"]) == []
 
 
+def test_burndown_does_not_double_count_parent_and_children():
+    ms = Milestone("M1", date(2026, 9, 28), date(2026, 10, 2))
+    issues = _parent_and_children()  # 親 P（12h）＋子 3 件（各 4h、2 件完了）
+    pts = burndown(issues, ms, TODAY, ["完了"], unit="hours")
+    assert pts[0].ideal == 12.0 and pts[-1].actual == 4.0  # 親の 12h を足すと 24h になってしまう
+    assert burndown(issues, ms, TODAY, ["完了"])[0].ideal == 3.0
+    assert burndown(issues, ms, TODAY, ["完了"], parent_child="parents")[0].ideal == 1.0
+    assert burndown(issues, ms, TODAY, ["完了"], parent_child="both")[0].ideal == 4.0
+
+
+def test_assignee_remaining_hours_do_not_double_count():
+    issues = [issue("P", est=12, who="A"), issue("C1", est=4, who="B", parent="P"), issue("C2", est=4, who="A", parent="P")]
+    hours = {a.name: a.remaining_hours for a in summarize(issues, [], TODAY, ["完了"]).assignees}
+    assert hours == {"A": 4.0, "B": 4.0}  # 親の 12h は子の 8h と同じ作業
+    hours = {a.name: a.remaining_hours for a in summarize(issues, [], TODAY, ["完了"], parent_child="parents").assignees}
+    assert hours == {"A": 12.0, "B": 0.0}
+    opens = {a.name: a.open for a in summarize(issues, [], TODAY, ["完了"]).assignees}
+    assert opens == {"A": 2, "B": 1}  # 件数（一覧）はすべての課題
+
+
+def test_record_snapshot_uses_countable(env: Path):
+    st = load_settings(env / "samples/config.yaml")
+    st.snapshot_file = str(env / "data/s.csv")
+    ms = Milestone("M1", date(2026, 9, 28), date(2026, 10, 2))
+    r = report.Report(summarize(_parent_and_children(), [ms], TODAY, ["完了"]), "X", _parent_and_children(), [ms])
+    report.record_snapshot(r, st)
+    assert snapshots.load(Path(st.snapshot_file), "M1") == {TODAY: 1.0}
+    assert snapshots.load(Path(st.snapshot_file), "M1", "hours") == {TODAY: 4.0}
+
+
+def test_snapshot_gaps():
+    ms = Milestone("M1", date(2026, 9, 26), date(2026, 10, 31))
+    snaps = {date(2026, 9, 26): 5.0, date(2026, 9, 27): 5.0, date(2026, 9, 30): 4.0, date(2026, 10, 1): 4.0}
+    assert snapshot_gaps(snaps, ms, TODAY) == [(date(2026, 9, 28), date(2026, 9, 29))]  # 今日は記録前なので見ない
+    snaps[date(2026, 9, 28)] = snaps[date(2026, 9, 29)] = 5.0
+    assert snapshot_gaps(snaps, ms, TODAY) == []
+    assert snapshot_gaps({}, ms, TODAY) == [(date(2026, 9, 26), date(2026, 10, 1))]  # 記録が消えた
+    assert snapshot_gaps({}, Milestone("M2", date(2026, 10, 2), date(2026, 10, 9)), TODAY) == []  # 始まったばかり
+    assert snapshot_gaps({}, Milestone("M3", None, None), TODAY) == []
+
+
+def test_cli_batch_warns_on_snapshot_gap(env: Path):
+    data = env / "data"
+    data.mkdir()
+    rows = ["2026-09-27,フェーズ2 製造,12,40", "2026-09-28,フェーズ2 製造,12,40", "2026-10-01,フェーズ2 製造,11,38"]
+    (data / "snapshots.csv").write_text("date,milestone,remaining_count,remaining_hours\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    rc, out = run("-c", str(env / "samples/config.yaml"), "batch")
+    assert rc == 0, out
+    assert "フェーズ2 製造: 記録がない日が 2 日（2026-09-29〜2026-09-30）" in out and "記録がない日" in out
+
+
+def test_scheduled_example_keeps_snapshots_on_branch():
+    wf = yaml.safe_load((ROOT / "docs/examples/scheduled-report.yml").read_text(encoding="utf-8"))
+    text_ = (ROOT / "docs/examples/scheduled-report.yml").read_text(encoding="utf-8")
+    assert "actions/cache" not in text_  # キャッシュは 7 日使わないと消える
+    assert wf["permissions"] == {"contents": "read"}
+    jobs = wf["jobs"]
+    writers = [n for n, j in jobs.items() if (j.get("permissions") or {}).get("contents") == "write"]
+    assert len(writers) == 1 and "BACKLOG_API_KEY" not in json.dumps(jobs[writers[0]])  # 書き込みは記録を保存するジョブだけ
+    assert "report-data" in json.dumps(jobs[writers[0]])
+
+
 def test_snapshots_overwrite_same_day(tmp_path: Path):
     p = tmp_path / "s.csv"
     snapshots.record(p, TODAY, [("M1", 5, 20.0)])
@@ -184,6 +250,66 @@ def test_backlog_api_pages_and_wiki(monkeypatch: pytest.MonkeyPatch):
     assert calls[-1][:2] == ("PATCH", "/wikis/77")
     api.save_wiki("新しいページ", "本文")
     assert calls[-1][:2] == ("POST", "/wikis") and calls[-1][3]["projectId"] == 9
+
+
+class FakeResponse:
+    def __init__(self, body: object, status: int = 200):
+        self.status, self.headers, self._body = status, {}, json.dumps(body).encode()
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class FakeOpener:
+    """順に応答する. 数値は HTTP エラー（例: 503）."""
+
+    def __init__(self, *answers: object):
+        self.answers = list(answers)
+        self.requests: list = []
+
+    def __call__(self, req, timeout=None):
+        self.requests.append(req)
+        a = self.answers.pop(0)
+        if isinstance(a, int):
+            raise urllib.error.HTTPError(req.full_url, a, "error", {}, None)  # type: ignore[arg-type]
+        return FakeResponse(a)
+
+
+def test_backlog_api_get_retries_on_429_and_5xx():
+    opener = FakeOpener(503, 429, {"id": 9})
+    api = BacklogApi("https://example.backlog.com", "SAMPLE", "k", opener=opener, sleep=lambda _s: None)
+    assert api.project() == {"id": 9}
+    assert len(opener.requests) == 3
+    assert opener.requests[-1].full_url.startswith("https://example.backlog.com/api/v2/projects/SAMPLE?apiKey=k")
+    with pytest.raises(HttpError):
+        BacklogApi("https://example.backlog.com", "S", "k", opener=FakeOpener(404), sleep=lambda _s: None).project()
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_backlog_api_writes_are_not_retried(status: int):
+    opener = FakeOpener([{"id": 77, "name": "進捗"}], status, {"ok": True})
+    api = BacklogApi("https://example.backlog.com", "SAMPLE", "k", opener=opener, sleep=lambda _s: None)
+    with pytest.raises(HttpError):
+        api.save_wiki("進捗", "本文")
+    assert [r.get_method() for r in opener.requests] == ["GET", "PATCH"]  # 二重に更新しない
+    assert opener.requests[-1].data == b"content=%E6%9C%AC%E6%96%87&mailNotify=false"
+
+
+def test_slack_default_http_does_not_retry_post(monkeypatch: pytest.MonkeyPatch):
+    import backlog_report.infrastructure.slack as slack_mod
+
+    opener = FakeOpener(503, {"ok": True})
+    monkeypatch.setattr(slack_mod, "_urlopen", opener)
+    req = urllib.request.Request("https://slack.com/api/chat.postMessage", data=b"{}", method="POST")
+    with pytest.raises(urllib.error.HTTPError):
+        _default_http(req)
+    assert len(opener.requests) == 1
 
 
 class FakeHttp:

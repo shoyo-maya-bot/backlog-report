@@ -65,7 +65,7 @@ PARENT_CHILD_MODES = ("children", "parents", "both")
 
 
 def countable(issues: list[Issue], mode: str = "children") -> list[Issue]:
-    """完了率の件数・見積時間に数える課題. 親課題と子課題を二重に数えないようにする.
+    """完了率・バーンダウン・担当者別の残り時間に数える課題. 親課題と子課題を二重に数えないようにする.
 
     - children（既定）: 子課題が結果にある親課題を除く（作業は子課題が持つ）
     - parents: 親課題が結果にある子課題を除く（親課題の単位で数える）
@@ -92,7 +92,8 @@ def summarize(
     first_status: str = "未対応",
     parent_child: str = "children",
 ) -> Summary:
-    counted = countable(issues, parent_child)  # 完了率の分母・分子（親子を二重に数えない）
+    counted = countable(issues, parent_child)  # 完了率の分母・分子と残り時間（親子を二重に数えない）
+    counted_keys = {i.key for i in counted}
     s = Summary(today, len(counted), sum(is_done(i, done_statuses) for i in counted))
     for i in issues:
         if is_done(i, done_statuses):
@@ -138,7 +139,8 @@ def summarize(
         a.open += 1
         a.delayed += i in s.delayed
         a.due_soon += i in s.due_soon
-        a.remaining_hours += max(0.0, (i.estimated_hours or 0) - (i.actual_hours or 0))
+        if i.key in counted_keys:  # 件数はすべての課題、残り時間は親子を二重に数えない
+            a.remaining_hours += max(0.0, (i.estimated_hours or 0) - (i.actual_hours or 0))
     s.assignees = sorted(loads.values(), key=lambda a: (-a.delayed, -a.open, a.name))
     return s
 
@@ -158,14 +160,16 @@ def burndown(
     *,
     unit: str = "count",
     snapshots: dict[date, float] | None = None,
+    parent_child: str = "children",
 ) -> list[BurndownPoint]:
     """マイルストーンのバーンダウン. 残量は件数（count）か見積時間（hours）.
 
     実績は、スナップショット（日々の実行で記録した残量）があればそれを、無ければ「完了した課題の最終更新日」を完了日とみなして計算する。
+    親課題と子課題は parent_child（countable）に従って二重に数えない。
     """
     if not (milestone.start and milestone.due):
         return []
-    group = [i for i in issues if milestone.name in i.milestones]
+    group = [i for i in countable(issues, parent_child) if milestone.name in i.milestones]
 
     def weight(i: Issue) -> float:
         return (i.estimated_hours or 0.0) if unit == "hours" else 1.0
@@ -184,3 +188,23 @@ def burndown(
                 actual = total - sum(weight(i) for i in group if is_done(i, done_statuses) and i.updated <= d)
         points.append(BurndownPoint(d, round(ideal, 2), None if actual is None else round(actual, 2)))
     return points
+
+
+def snapshot_gaps(snapshots: dict[date, float], milestone: Milestone, today: date) -> list[tuple[date, date]]:
+    """スナップショットが無い日の範囲（開始日, 終了日）. バーンダウンのその日の実績は推定になる.
+
+    マイルストーンの開始日から、昨日（今日の分はこの実行のあとで記録する）か期限日の早いほうまでを見る。
+    """
+    if not (milestone.start and milestone.due):
+        return []
+    end = min(today - timedelta(days=1), milestone.due)
+    gaps: list[tuple[date, date]] = []
+    d = milestone.start
+    while d <= end:
+        if d not in snapshots:
+            first = d
+            while d + timedelta(days=1) <= end and d + timedelta(days=1) not in snapshots:
+                d += timedelta(days=1)
+            gaps.append((first, d))
+        d += timedelta(days=1)
+    return gaps

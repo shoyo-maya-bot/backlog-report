@@ -10,7 +10,7 @@ report:
   done_statuses: [完了]          # 完了とみなす状態（処理済みも含めるなら [処理済み, 完了]）
   milestones: []                 # 対象のマイルストーン（空ならすべて）
   due_soon_days: 3               # 期限まで何日以内を「期限間近」とするか
-  parent_child: children         # 完了率の数え方: children（子課題で数える）/ parents（親課題で数える）/ both（両方）
+  parent_child: children         # 完了率・バーンダウン・担当者別の残り時間の数え方: children（子課題で数える）/ parents（親課題で数える）/ both（両方）
   output_dir: output             # レポートとグラフの出力先
   snapshot_file: data/snapshots.csv   # バーンダウンの実績を記録するファイル（batch のたびに 1 行）
   # today: 2026-10-02            # 基準日を固定する（試行・テスト用）
