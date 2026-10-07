@@ -34,6 +34,7 @@ backlog-report -c samples/config.yaml batch --wiki                 # output/ に
 | `report.done_statuses` | 完了とみなす状態（既定: 完了。処理済みも含めるなら `[処理済み, 完了]`） |
 | `report.milestones` | 対象のマイルストーン（空ならアーカイブ以外のすべて） |
 | `report.due_soon_days` | 何日以内を「期限間近」とするか（既定 3） |
+| `report.timezone` | 「今日」と課題の更新日時の日付を決めるタイムゾーン（既定 `Asia/Tokyo`。環境変数 `BACKLOG_REPORT_TIMEZONE` が優先） |
 | `report.parent_child` | 完了率・バーンダウン・担当者別の残り時間で、親課題・子課題をどう数えるか（下の表。既定 `children`） |
 | `slack.channel` | Bot トークンで投稿するチャンネル ID |
 | `wiki.page` | 上書きする Wiki のページ名（手で編集しても次回の実行で上書きされる） |
@@ -73,6 +74,12 @@ Slack アプリの作成とトークンの発行は、Slack のワークスペ�
 `docs/examples/scheduled-report.yml` が GitHub Actions の例です。毎朝実行して残量を記録し、Slack と Wiki へは月曜の朝（と手動実行のとき）だけ送ります。
 Windows のタスクスケジューラなら `backlog-report batch --slack --wiki` を登録します。
 
+- 「今日」は PC やサーバーの時計ではなく、`report.timezone`（既定は日本時間）で決めます。GitHub Actions は UTC で動くので、
+  UTC 23:50（日本時間 8:50）に実行しても、レポートの日付・期限超過の判定・記録の日付は日本時間の日付になります
+- 例では、記録（`report` ジョブ）と通知（`notify` ジョブ）を分けています。Slack や Wiki への送信が失敗しても、
+  その日の記録は `save-snapshots` ジョブで `report-data` ブランチに残ります
+- 例の actions はコミット SHA で固定し、依存は `constraints.txt` で版を固定して入れます
+
 バーンダウンの実績は `batch` を実行するたびに `data/snapshots.csv` に 1 日 1 行ずつ記録されるので、毎日実行すると正確になります。
 この記録は**消えると取り戻せない**ので、置き場所に気をつけてください。
 
@@ -81,6 +88,8 @@ Windows のタスクスケジューラなら `backlog-report batch --slack --wik
   Backlog・Slack の秘密情報を使うジョブは読み取りだけです。初回は `report-data` ブランチが無くても自動で作ります。
   `report-data` は記録だけのブランチなので、main にマージしないでください。過去の記録は `git log report-data` で追えます
 - **自分の PC やサーバー**: `data/` をバックアップの対象にしてください
+
+記録のファイルは一時ファイルに書いてから置き換えるので、書き込みの途中で止まっても、それまでの記録は消えません。
 
 記録がない日がある（実行が止まっていた・記録ファイルが消えた）と、`batch` は次のような警告を出します。その日の実績は課題の最終更新日からの推定になるので、
 線が実際とずれることがあります。
@@ -97,15 +106,31 @@ Windows のタスクスケジューラなら `backlog-report batch --slack --wik
 
 Backlog からの読み取り（GET）は、混雑（429）やサーバーの一時的なエラー（5xx）・通信エラーのとき、少し待って最大 3 回まで再試行します。
 Wiki の更新（POST / PATCH）と Slack への投稿は、二重に登録・投稿しないよう再試行しません（失敗したら終了コード `3`）。
+Slack ボット（`/progress`）は、引用符が閉じていない入力や Backlog の読み取りの失敗も、本人にだけ見えるメッセージで返します。
 
 ## 開発
 
 ```bash
 ./setup.sh                    # Windows: setup.cmd
+pip install -e ".[dev,bot]" -c constraints.txt   # 依存の版を CI と同じにする（constraints.txt は GitHub Actions の deps-lock が作る）
 ruff check . && ruff format --check . && pytest
 ```
 
+CI は Linux と Windows でテストを流し、bandit（SAST）と pip-audit（依存の脆弱性）も行います。
+
 テストはモックと偽の HTTP で動き、Backlog・Slack には接続しません。
+
+## 変更点
+
+### 2026-10（fix/score-up-1007）
+
+利用者の動きが変わるもの:
+
+- 「今日」を OS の日付ではなく `report.timezone`（既定 `Asia/Tokyo`）で決めます。UTC で動く環境では、
+  レポートのファイル名・期限超過の判定・`data/snapshots.csv` の日付が、以前より 1 日後ろ（日本時間の日付）になります
+- 課題の作成日時・更新日時も、UTC ではなく同じタイムゾーンの日付にします（バーンダウンの推定に使う完了日が変わることがあります）
+- 定期実行の例（`docs/examples/scheduled-report.yml`）を、記録・保存・通知の 3 つのジョブに分けました。
+  コピーして使っている場合は差し替えてください（`constraints.txt` を使うので、リポジトリにそのファイルが必要です）
 
 ## セキュリティ・ライセンス
 
