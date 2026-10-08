@@ -3,9 +3,13 @@
 #
 # バーンダウンの実績（data/snapshots.csv）は、専用のブランチ report-data にコミットして残す（無料・期限なし）。
 # Actions のキャッシュは 7 日使わないと消えるので、記録の置き場所には使わない。
-# - 毎日実行して残量を記録し、Slack と Wiki へは月曜（と手動実行のとき）だけ送る
+# - report ジョブ: 毎日実行して残量を記録する（通知はしない）
+# - save-snapshots ジョブ: 記録を report-data ブランチに保存する
+# - notify ジョブ: 月曜（と手動実行のとき）だけ Slack と Wiki へ送る。通知が失敗しても、記録の保存には影響しない
 # - リポジトリへの書き込み（contents: write）は、記録をコミットする save-snapshots ジョブだけに与える。
-#   Backlog・Slack の秘密情報を使う report ジョブは読み取りだけ
+#   Backlog・Slack の秘密情報を使うジョブは読み取りだけ
+# - 「今日」は BACKLOG_REPORT_TIMEZONE（日本時間）で決める。Actions の時計は UTC なので、OS の日付は使わない
+# - actions はコミット SHA で固定し（本体の CI と同じ）、依存は constraints.txt で版を固定して入れる
 name: progress-report
 
 on:
@@ -20,16 +24,21 @@ concurrency:
   group: progress-report   # 記録のコミットが重ならないよう、同時には 1 つだけ動かす
   cancel-in-progress: false
 
+env:
+  BACKLOG_REPORT_TIMEZONE: Asia/Tokyo
+
 jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
-      - run: pip install -e .
+      - run: pip install -e . -c constraints.txt
       # 前回までの記録を report-data ブランチから取り出す（初回はブランチが無いので空から始める）
       - name: restore snapshots
         run: |
@@ -39,17 +48,11 @@ jobs:
           else
             echo "::notice::report-data ブランチがまだありません（初回）。記録を新しく作ります"
           fi
-      - name: report
-        run: |
-          flags=""
-          if [ "$(TZ=Asia/Tokyo date +%u)" = 1 ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            flags="--slack --wiki"
-          fi
-          backlog-report -c config.ci.yaml batch $flags
+      - name: record（残量の記録とレポートのファイル. 通知はしない）
+        run: backlog-report -c config.ci.yaml batch
         env:
           BACKLOG_API_KEY: ${{ secrets.BACKLOG_API_KEY }}
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: snapshots
           path: data/snapshots.csv
@@ -62,8 +65,10 @@ jobs:
     permissions:
       contents: write   # report-data ブランチへの push だけに使う
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true   # report-data ブランチへ push するため（このジョブだけ）
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: snapshots
           path: ${{ runner.temp }}/snapshots
@@ -83,3 +88,37 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "data: バーンダウンの記録 $(TZ=Asia/Tokyo date +%F)"
           git push origin report-data
+
+  # 通知は記録とは別のジョブ. Slack や Wiki が失敗しても、その日の記録は save-snapshots で残る
+  notify:
+    needs: report
+    runs-on: ubuntu-latest
+    steps:
+      - name: 月曜（日本時間）か手動実行のときだけ送る
+        id: when
+        run: |
+          if [ "$(TZ=Asia/Tokyo date +%u)" = 1 ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "send=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.when.outputs.send == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: steps.when.outputs.send == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - if: steps.when.outputs.send == 'true'
+        run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk && pip install -e . -c constraints.txt
+      # バーンダウンのグラフに今日までの記録を使う（記録はもう report ジョブで済んでいるので、ここでは足さない）
+      - if: steps.when.outputs.send == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: snapshots
+          path: data
+      - if: steps.when.outputs.send == 'true'
+        name: notify
+        run: backlog-report -c config.ci.yaml batch --no-snapshot --slack --wiki
+        env:
+          BACKLOG_API_KEY: ${{ secrets.BACKLOG_API_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

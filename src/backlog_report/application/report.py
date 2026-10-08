@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
-from ..config import Settings
+from ..config import Settings, local_today
 from ..domain.model import Issue, Milestone
 from ..domain.progress import Summary, burndown, countable, is_done, snapshot_gaps, summarize
 from ..infrastructure import snapshots
@@ -31,9 +31,18 @@ def _slug(s: str) -> str:
     return re.sub(r"[^\w.-]+", "_", s).strip("_") or "milestone"
 
 
-def build(port: BacklogPort, st: Settings, *, milestone: str = "", assignee: str = "", today: date | None = None) -> Report:
-    today = today or st.today or date.today()
-    issues, milestones = load_all(port)
+def build(
+    port: BacklogPort,
+    st: Settings,
+    *,
+    milestone: str = "",
+    assignee: str = "",
+    today: date | None = None,
+    now: datetime | None = None,
+) -> Report:
+    """レポートを作る. 今日は today → 設定の today → 設定のタイムゾーンでの現在の日付（now. 既定は現在時刻）の順に決める."""
+    today = today or st.today or local_today(st.timezone, now)
+    issues, milestones = load_all(port, st.timezone)
     targets = [milestone] if milestone else st.milestones
     if targets:
         unknown = [m for m in targets if m not in {x.name for x in milestones}]

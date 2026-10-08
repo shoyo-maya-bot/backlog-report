@@ -15,12 +15,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from devtools_common.httpclient import HttpClient, HttpError, safe_urlopen
 
+from ..config import DEFAULT_TZ, zone
 from ..domain.model import Issue, Milestone
 
 
@@ -144,12 +145,25 @@ class MockBacklog:
 
 
 def _d(value: str | None) -> date | None:
+    """日付の項目（開始日・期限日など. 例: 2026-10-01T00:00:00Z）. 日付だけに意味があるので、そのまま先頭の日付を使う."""
     if not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).date() if "T" in value else date.fromisoformat(value[:10])
+    return date.fromisoformat(value[:10])
 
 
-def to_issue(raw: dict[str, Any], keys_by_id: dict[int, str] | None = None) -> Issue:
+def _ts(value: str | None, tz: str) -> date | None:
+    """日時の項目（作成日時・更新日時. UTC）→ タイムゾーン tz での日付."""
+    if not value:
+        return None
+    if "T" not in value:
+        return date.fromisoformat(value[:10])
+    t = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=UTC)
+    return t.astimezone(zone(tz)).date()
+
+
+def to_issue(raw: dict[str, Any], keys_by_id: dict[int, str] | None = None, tz: str = DEFAULT_TZ) -> Issue:
     return Issue(
         key=raw["issueKey"],
         summary=raw.get("summary", ""),
@@ -161,8 +175,8 @@ def to_issue(raw: dict[str, Any], keys_by_id: dict[int, str] | None = None) -> I
         due=_d(raw.get("dueDate")),
         estimated_hours=raw.get("estimatedHours"),
         actual_hours=raw.get("actualHours"),
-        created=_d(raw.get("created")) or date.min,
-        updated=_d(raw.get("updated")) or date.min,
+        created=_ts(raw.get("created"), tz) or date.min,
+        updated=_ts(raw.get("updated"), tz) or date.min,
         parent_key=(keys_by_id or {}).get(raw.get("parentIssueId") or -1, ""),
     )
 
@@ -171,7 +185,7 @@ def to_milestone(raw: dict[str, Any]) -> Milestone:
     return Milestone(raw["name"], _d(raw.get("startDate")), _d(raw.get("releaseDueDate")), bool(raw.get("archived")))
 
 
-def load_all(port: BacklogPort) -> tuple[list[Issue], list[Milestone]]:
+def load_all(port: BacklogPort, tz: str = DEFAULT_TZ) -> tuple[list[Issue], list[Milestone]]:
     raw = port.issues()
     keys = {r["id"]: r["issueKey"] for r in raw if "id" in r}
-    return [to_issue(r, keys) for r in raw], [to_milestone(v) for v in port.versions()]
+    return [to_issue(r, keys, tz) for r in raw], [to_milestone(v) for v in port.versions()]

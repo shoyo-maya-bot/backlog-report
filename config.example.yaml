@@ -13,6 +13,7 @@ report:
   parent_child: children         # 完了率・バーンダウン・担当者別の残り時間の数え方: children（子課題で数える）/ parents（親課題で数える）/ both（両方）
   output_dir: output             # レポートとグラフの出力先
   snapshot_file: data/snapshots.csv   # バーンダウンの実績を記録するファイル（batch のたびに 1 行）
+  timezone: Asia/Tokyo           # 「今日」と更新日時の日付を決めるタイムゾーン（環境変数 BACKLOG_REPORT_TIMEZONE が優先）
   # today: 2026-10-02            # 基準日を固定する（試行・テスト用）
 
 slack:

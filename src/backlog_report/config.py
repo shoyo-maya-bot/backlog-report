@@ -1,19 +1,45 @@
 """設定（config.yaml）と秘密情報（.env）. 層 6: 設定.
 
 config.yaml には秘密情報を書かない。API キー・トークンは .env（コミットしない）か環境変数から読む。
+
+「今日」と課題の更新日時の日付は、タイムゾーン（report.timezone、環境変数 BACKLOG_REPORT_TIMEZONE が優先。
+既定 Asia/Tokyo）で決める。定期実行の環境（GitHub Actions など）は UTC で動くため、OS の日付は使わない。
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
 SECRETS = ("BACKLOG_API_KEY", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WEBHOOK_URL")
+DEFAULT_TZ = "Asia/Tokyo"
+TZ_ENV = "BACKLOG_REPORT_TIMEZONE"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def zone(name: str) -> ZoneInfo:
+    """タイムゾーン名 → ZoneInfo. 分からない名前は ValueError（Windows でデータが無いときは tzdata を入れる）."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError(f"タイムゾーンが分かりません: {name}（例: Asia/Tokyo、UTC。Windows では pip install tzdata）") from None
+
+
+def local_today(tz: str = DEFAULT_TZ, now: datetime | None = None) -> date:
+    """そのタイムゾーンでの今日の日付. now を省略すると現在時刻."""
+    now = now or _utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return now.astimezone(zone(tz)).date()
 
 
 @dataclass
@@ -32,6 +58,7 @@ class Settings:
     slack_channel: str = ""
     wiki_page: str = ""  # 例: 進捗レポート/週次。空なら Wiki は更新しない
     today: date | None = None
+    timezone: str = DEFAULT_TZ  # 「今日」と更新日時の日付を決めるタイムゾーン
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -61,8 +88,10 @@ def load_settings(path: Path) -> Settings:
         snapshot_file=str(r.get("snapshot_file", "data/snapshots.csv")),
         slack_channel=str(s.get("channel", "")),
         wiki_page=str(w.get("page", "") or ""),
+        timezone=str(os.environ.get(TZ_ENV) or r.get("timezone") or DEFAULT_TZ),
         raw=data,
     )
+    zone(st.timezone)
     if r.get("today"):
         st.today = date.fromisoformat(str(r["today"]))
     if st.parent_child not in ("children", "parents", "both"):
