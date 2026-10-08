@@ -430,3 +430,176 @@ def test_numeric_log_format_survives_redact_filter():
     finally:
         logger.removeHandler(handler)
     assert "記録 3 件" in buf.getvalue() and "Logging error" not in err.getvalue()
+
+
+# --- 第 3 回: バーンダウンの単位の混在・リストの設定項目・Slack の上限 ---------------------------------
+
+
+def _ms_issue(key: str, est: float | None, status: str = "未対応"):
+    from backlog_report.domain.model import Issue
+
+    return Issue(key, key, status, "A", "タスク", ("M1",), None, None, est, None, date(2026, 9, 1), date(2026, 9, 1), "")
+
+
+def _report_for(issues, today: date = date(2026, 10, 2)):
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+
+    ms = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    return report.Report(summarize(issues, [ms], today, ["完了"]), "X", issues, [ms])
+
+
+def test_snapshot_records_unit(tmp_path: Path):
+    st = _settings(tmp_path)
+    report.record_snapshot(_report_for([_ms_issue("X-1", None), _ms_issue("X-2", None)]), st)
+    with Path(st.snapshot_file).open(encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows[0]["unit"] == "count"
+    report.record_snapshot(_report_for([_ms_issue("X-1", 3.0)], today=date(2026, 10, 3)), st)
+    assert snapshots.load_units(Path(st.snapshot_file), "M1") == {date(2026, 10, 2): "count", date(2026, 10, 3): "hours"}
+
+
+def test_burndown_mixed_units_warns_and_draws_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """期間の途中で見積時間を入れると、前半は件数・後半は時間の記録になり、時間のバーンダウンの前半が 0 h になって壊れていた."""
+    from backlog_report.rendering import charts
+
+    st = _settings(tmp_path)
+    snap = Path(st.snapshot_file)
+    snap.parent.mkdir(parents=True)
+    # 古い形式（単位の列なし）: 見積が無かった日は remaining_hours が 0
+    snap.write_text(
+        "date,milestone,remaining_count,remaining_hours\n2026-09-28,M1,2,0\n2026-09-29,M1,2,0\n2026-09-30,M1,2,6\n2026-10-01,M1,2,6\n",
+        encoding="utf-8",
+    )
+    drawn: dict[str, object] = {}
+    monkeypatch.setattr(charts, "burndown", lambda pts, path, title, ylabel: drawn.update(pts=pts, ylabel=ylabel))
+    monkeypatch.setattr(charts, "gantt", lambda *a, **k: None)
+    r = _report_for([_ms_issue("X-1", 3.0), _ms_issue("X-2", 3.0)])
+    report.write_files(r, st, tmp_path / "out")
+    assert drawn["ylabel"] == "残り件数"  # 時間で描くと 9/28・9/29 の実績が 0 h になる
+    assert [p.actual for p in drawn["pts"] if p.actual is not None] == [2, 2, 2, 2, 2]
+    assert any("単位が混ざっています" in w and "件数 2 日・見積時間 2 日" in w and "2026-09-28〜2026-09-29" in w for w in r.warnings), (
+        r.warnings
+    )
+
+
+def test_burndown_same_unit_has_no_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backlog_report.rendering import charts
+
+    st = _settings(tmp_path)
+    snap = Path(st.snapshot_file)
+    snap.parent.mkdir(parents=True)
+    snap.write_text(
+        "date,milestone,remaining_count,remaining_hours,unit\n2026-09-28,M1,2,6,hours\n2026-09-29,M1,2,6,hours\n"
+        "2026-09-30,M1,0,0,\n2026-10-01,M1,2,6,hours\n",
+        encoding="utf-8",
+    )
+    drawn: dict[str, object] = {}
+    monkeypatch.setattr(charts, "burndown", lambda pts, path, title, ylabel: drawn.update(ylabel=ylabel))
+    monkeypatch.setattr(charts, "gantt", lambda *a, **k: None)
+    r = _report_for([_ms_issue("X-1", 3.0), _ms_issue("X-2", 3.0)])
+    report.write_files(r, st, tmp_path / "out")
+    assert drawn["ylabel"] == "残り見積時間（h）"
+    assert not [w for w in r.warnings if "単位" in w]
+
+
+@pytest.mark.parametrize(
+    ("yaml_value", "expected"),
+    [("完了", ["完了"]), ("[処理済み, 完了]", ["処理済み", "完了"]), ("[]", [])],
+)
+def test_list_settings_accept_single_string(tmp_path: Path, yaml_value: str, expected: list[str]):
+    """`done_statuses: 完了` が ["完", "了"] になり、完了の課題を数えられなくなっていた."""
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        f"backlog: {{project_key: X, mock_dir: m}}\nreport: {{done_statuses: {yaml_value}, milestones: {yaml_value}}}\n", encoding="utf-8"
+    )
+    st = load_settings(p)
+    assert st.done_statuses == expected and st.milestones == expected
+
+
+def test_list_settings_single_number_and_null(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    p.write_text("backlog: {project_key: X, mock_dir: m}\nreport: {milestones: 2026, done_statuses: null}\n", encoding="utf-8")
+    st = load_settings(p)
+    assert st.milestones == ["2026"] and st.done_statuses == ["完了"]
+
+
+@pytest.mark.parametrize("yaml_value", ["{a: 1}", "[[完了]]", "[完了, null]"])
+def test_list_settings_reject_other_shapes(tmp_path: Path, yaml_value: str):
+    p = tmp_path / "config.yaml"
+    p.write_text(f"backlog: {{project_key: X, mock_dir: m}}\nreport: {{done_statuses: {yaml_value}}}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="report.done_statuses は文字列のリスト"):
+        load_settings(p)
+
+
+def test_config_section_must_be_mapping(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    p.write_text("backlog: {project_key: X, mock_dir: m}\nreport: 完了\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="report は項目の並び"):
+        load_settings(p)
+
+
+def _slack_summary(n_delayed: int, n_ms: int = 1, summary: str = "件名", project: str = "P"):
+    from backlog_report.domain.model import Issue, Milestone
+    from backlog_report.domain.progress import Summary, summarize
+
+    issues = [
+        Issue(f"X-{n}", summary, "未対応", "A", "タスク", (), None, date(2026, 10, 1), None, None, date(2026, 9, 1), date(2026, 9, 1), "")
+        for n in range(n_delayed)
+    ]
+    ms = [Milestone(f"マイルストーン{'あ' * 80}{n}", date(2026, 9, 1), date(2026, 10, 31)) for n in range(n_ms)]
+    s = summarize(issues, ms, date(2026, 10, 2), ["完了"])
+    assert isinstance(s, Summary)
+    return s
+
+
+def _check_slack_limits(blocks: list[dict]) -> None:
+    from backlog_report.rendering import text
+
+    assert len(blocks) <= text.SLACK_MAX_BLOCKS
+    for b in blocks:
+        if b["type"] == "section":
+            assert len(b["text"]["text"]) <= text.SLACK_SECTION_TEXT, len(b["text"]["text"])
+        if b["type"] == "header":
+            assert len(b["text"]["text"]) <= text.SLACK_HEADER_TEXT
+
+
+def test_slack_section_fits_3000_chars_with_long_summaries():
+    """件名が長いと期限超過の section が 3000 字を超え、Slack が invalid_blocks で投稿ごと拒んでいた."""
+    from backlog_report.rendering import text
+
+    s = _slack_summary(15, summary="長い件名" * 200)
+    _, blocks = text.slack_blocks(s, "P", "https://example.backlog.com")
+    _check_slack_limits(blocks)
+    body = blocks[-1]["text"]["text"]
+    assert body.startswith("*期限超過*\n• <https://example.backlog.com/view/X-0|X-0>")
+    shown = body.count("\n• ")
+    assert 1 <= shown < 10 and body.endswith(f"\n…ほか {15 - shown} 件")  # 載せられなかった行 ＋ 一覧の外の 5 件
+
+
+def test_slack_section_fits_with_many_milestones():
+    from backlog_report.rendering import text
+
+    s = _slack_summary(0, n_ms=60)
+    _, blocks = text.slack_blocks(s, "P" * 300)
+    _check_slack_limits(blocks)
+    ms = blocks[2]["text"]["text"]
+    assert "…ほか" in ms and ms.count("\n• ") >= 10
+    assert blocks[-1]["text"]["text"] == "*期限超過*\nなし"
+
+
+def test_fit_lines_and_limit_blocks():
+    from backlog_report.rendering import text
+
+    assert text.fit_lines("*T*", ["a", "b"], limit=100) == "*T*\na\nb"
+    assert text.fit_lines("*T*", ["a", "b"], hidden=3, limit=100) == "*T*\na\nb\n…ほか 3 件"
+    assert text.fit_lines("*T*", [], limit=100) == "*T*\nなし"
+    out = text.fit_lines("*T*", ["x" * 40, "y" * 40, "z"], limit=60)
+    assert out == "*T*\n" + "x" * 40 + "\n…ほか 2 件" and len(out) <= 60
+    out = text.fit_lines("*T*", ["x" * 200, "y"], limit=60)
+    assert len(out) <= 60 and out.endswith("…\n…ほか 1 件")
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": str(n)}} for n in range(60)]
+    got = text.limit_blocks(blocks)
+    assert len(got) == 50 and got[48]["text"]["text"] == "48"
+    assert "ほか 11 ブロックを省略" in got[-1]["elements"][0]["text"]
+    assert text.limit_blocks(blocks[:50]) == blocks[:50]
