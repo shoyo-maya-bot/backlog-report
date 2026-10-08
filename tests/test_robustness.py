@@ -781,3 +781,28 @@ def test_slack_bot_unknown_option_is_error(tmp_path: Path):
     st, port = _bot_env(tmp_path)
     res = slack_bot.handle("--chanel", port, st)
     assert res["response_type"] == "ephemeral" and "知らないオプション" in res["text"]
+
+
+# --- Markdown・Wiki は全件、件数で切るのは Slack だけ ---------------------------------------------------
+
+
+def test_markdown_and_wiki_list_all_delayed_issues_slack_is_limited():
+    from backlog_report.domain.model import Issue
+    from backlog_report.domain.progress import summarize
+    from backlog_report.rendering import text
+
+    issues = [
+        Issue(
+            f"X-{n}", f"件名{n}", "未対応", "A", "タスク", ("M1",), None, date(2026, 9, 1), None, None, date(2026, 9, 1), date(2026, 9, 1)
+        )
+        for n in range(1, 31)
+    ]
+    s = summarize(issues, [], date(2026, 10, 2), ["完了"])
+    md = text.markdown(s, "X")
+    wiki = text.wiki(s, "X")
+    for body in (md, wiki):
+        assert all(f"| X-{n} |" in body for n in range(1, 31)), "Markdown・Wiki は全件"
+        assert "ほか" not in body
+    _, blocks = text.slack_blocks(s, "X")
+    delayed = next(b["text"]["text"] for b in blocks if b.get("text", {}).get("text", "").startswith("*期限超過*"))
+    assert "X-30" not in delayed and "…ほか 20 件" in delayed  # Slack は上限で切る
