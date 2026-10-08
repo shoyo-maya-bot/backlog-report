@@ -28,7 +28,7 @@ def handle(command_text: str, port: BacklogPort, st: Settings) -> dict[str, Any]
     try:
         args = shlex.split(command_text or "")
     except ValueError:
-        return _error(f'引用符（"）が閉じていません: `{command_text}`\n{HELP}')
+        return _error(f'引用符（"）が閉じていません: `{text.mrkdwn_escape(command_text)}`\n{HELP}')
     if args and args[0] in ("help", "ヘルプ", "-h"):
         return {"response_type": "ephemeral", "text": HELP}
     milestone = next((a for a in args if not a.startswith("@")), "")
@@ -36,7 +36,7 @@ def handle(command_text: str, port: BacklogPort, st: Settings) -> dict[str, Any]
     try:
         r = report.build(port, st, milestone=milestone, assignee=assignee)
     except ValueError as e:
-        return _error(f"{e}\n{HELP}")
+        return _error(f"{text.mrkdwn_escape(str(e))}\n{HELP}")
     except HttpError as e:
         return _error(f"Backlog から課題を読み取れませんでした（{e}）。しばらくしてからもう一度試してください")
     msg, blocks = text.slack_blocks(

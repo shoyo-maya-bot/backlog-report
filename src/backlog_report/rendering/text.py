@@ -80,16 +80,28 @@ def wiki(s: Summary, project: str, space_url: str = "") -> str:
     )
 
 
-def slack_blocks(s: Summary, project: str, space_url: str = "") -> tuple[str, list[dict[str, Any]]]:
-    def link(key: str) -> str:
-        return f"<{space_url}/view/{key}|{key}>" if space_url else key
+def mrkdwn_escape(value: str) -> str:
+    """Slack の mrkdwn で特別な意味を持つ & < > を実体参照にする（件名の「<」で書式が崩れたり、<!channel> で通知が飛んだりしないように）.
 
-    text = f"進捗レポート {project}（{s.today}）: 完了 {s.done}/{s.total}、期限超過 {len(s.delayed)} 件"
+    Slack の決まりどおり、この 3 文字だけを置き換える（* や _ などはそのまま）。
+    """
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def slack_blocks(s: Summary, project: str, space_url: str = "") -> tuple[str, list[dict[str, Any]]]:
+    esc = mrkdwn_escape
+
+    def link(key: str) -> str:
+        return f"<{space_url}/view/{key}|{esc(key)}>" if space_url else esc(key)
+
+    text = f"進捗レポート {esc(project)}（{s.today}）: 完了 {s.done}/{s.total}、期限超過 {len(s.delayed)} 件"
     ms = "\n".join(
-        f"• *{m.name}* {m.done}/{m.total}（{_pct(m.ratio)}）経過 {_pct(m.expected_ratio(s.today))} {_state(m.ratio, m.expected_ratio(s.today))}"
+        f"• *{esc(m.name)}* {m.done}/{m.total}（{_pct(m.ratio)}）経過 {_pct(m.expected_ratio(s.today))} {_state(m.ratio, m.expected_ratio(s.today))}"
         for m in s.milestones
     )
-    delayed = "\n".join(f"• {link(i.key)} {i.summary}（{i.assignee or '未割当'}、期限 {i.due}）" for i in s.delayed[:10]) or "なし"
+    delayed = (
+        "\n".join(f"• {link(i.key)} {esc(i.summary)}（{esc(i.assignee or '未割当')}、期限 {i.due}）" for i in s.delayed[:10]) or "なし"
+    )
     if len(s.delayed) > 10:
         delayed += f"\n…ほか {len(s.delayed) - 10} 件"
     blocks: list[dict[str, Any]] = [
