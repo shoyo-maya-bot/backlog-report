@@ -29,4 +29,4 @@
 
 ### 依存
 
-- devtools-common の固定を `2e25f8a` → `cbe97d5` に更新
+- devtools-common の固定を `2e25f8a` → `cbe97d5` → `6a263b8` に更新
