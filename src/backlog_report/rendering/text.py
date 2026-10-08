@@ -20,13 +20,18 @@ def _state(ratio: float, expected: float | None) -> str:
     return "🟢 順調" if gap >= -0.05 else "🟡 やや遅れ" if gap >= -0.2 else "🔴 遅れ"
 
 
+def cell(value: object) -> str:
+    """Markdown の表のセル. 区切りの `|` を全角の「／」に、改行を空白にする（名前に `|` があっても列がずれないように）."""
+    return str(value).replace("|", "／").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+
+
 def _issue_rows(issues: list[Issue], today: date, link) -> list[str]:
     """Markdown・Wiki の課題の表. 全件を載せる（件数で切るのは Slack だけ: slack_blocks の SLACK_DELAYED_ROWS と文字数の上限）."""
     rows = ["| 課題 | 件名 | 担当 | 状態 | 期限 | 超過 |", "|---|---|---|---|---|---|"]
     for i in issues:
         over = f"{(today - i.due).days} 日" if i.due and i.due < today else ""
         rows.append(
-            f"| {link(i.key)} | {i.summary.replace('|', '／')} | {i.assignee or '（未割当）'} | {i.status} | {i.due or ''} | {over} |"
+            f"| {link(i.key)} | {cell(i.summary)} | {cell(i.assignee or '（未割当）')} | {cell(i.status)} | {i.due or ''} | {over} |"
         )
     return rows
 
@@ -50,14 +55,14 @@ def markdown(s: Summary, project: str, *, space_url: str = "", charts: dict[str,
         exp = m.expected_ratio(s.today)
         period = f"{m.start or '?'} 〜 {m.due or '?'}"
         lines.append(
-            f"| {m.name} | {period} | {m.done}/{m.total}（{_pct(m.ratio)}） | {_pct(m.hours_ratio)} | {_pct(exp)} | {_state(m.ratio, exp)} | {m.delayed} |"
+            f"| {cell(m.name)} | {period} | {m.done}/{m.total}（{_pct(m.ratio)}） | {_pct(m.hours_ratio)} | {_pct(exp)} | {_state(m.ratio, exp)} | {m.delayed} |"
         )
     lines += ["", "## 期限超過", ""] + (_issue_rows(s.delayed, s.today, link) if s.delayed else ["なし"])
     lines += ["", "## 期限間近", ""] + (_issue_rows(s.due_soon, s.today, link) if s.due_soon else ["なし"])
     if s.not_started:
         lines += ["", "## 開始日を過ぎて未着手", ""] + _issue_rows(s.not_started, s.today, link)
     lines += ["", "## 担当者別", "", "| 担当 | 未完了 | 期限超過 | 期限間近 | 残り見積時間 |", "|---|---|---|---|---|"]
-    lines += [f"| {a.name} | {a.open} | {a.delayed} | {a.due_soon} | {a.remaining_hours:.1f} h |" for a in s.assignees]
+    lines += [f"| {cell(a.name)} | {a.open} | {a.delayed} | {a.due_soon} | {a.remaining_hours:.1f} h |" for a in s.assignees]
     for title, path in (charts or {}).items():
         lines += ["", f"## {title}", "", f"![{title}]({path})"]
     lines += [
