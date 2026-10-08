@@ -76,7 +76,7 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
         snap = Path(st.snapshot_file)
         for m in r.milestones:
             unit = _burndown_unit(r, m, st, snap)
-            history = snapshots.load(snap, m.name, unit)
+            history = snapshots.load(snap, m.name, unit, r.warnings)
             gaps = snapshot_gaps(history, m, r.summary.today)
             if gaps:
                 r.warnings.append(_gap_message(m.name, gaps))
@@ -112,7 +112,7 @@ def _burndown_unit(r: Report, m: Milestone, st: Settings, snap: Path) -> str:
     """
     unit = _natural_unit(r, m, st)
     start = m.start or date.min
-    recorded = {d: u for d, u in snapshots.load_units(snap, m.name).items() if start <= d < r.summary.today and u}
+    recorded = {d: u for d, u in snapshots.load_units(snap, m.name, r.warnings).items() if start <= d < r.summary.today and u}
     others = sorted(d for d, u in recorded.items() if u != unit)
     if not others:
         return unit
@@ -146,10 +146,11 @@ def record_snapshot(r: Report, st: Settings) -> None:
         snapshots.record(Path(st.snapshot_file), r.summary.today, rows)
 
 
-def post_slack(r: Report, st: Settings, client: SlackClient, *, force: bool = False) -> list[str]:
+def post_slack(r: Report, st: Settings, client: SlackClient, *, force: bool = False, record: bool = True) -> list[str]:
     """Slack に本文とグラフを送る. 送れたものは 1 件ずつ st.post_log に記録し、同じ日・同じ送り先・同じプロジェクトには二度送らない.
 
     途中（画像のアップロードなど）で失敗して再実行しても、送れていた本文や画像は送り直さない。force で記録を無視して送る。
+    record=False（過去の日付で作り直したレポート）では送ったことを記録しない（その日に実際に送った記録と混ざらないように）。
     戻り値は、送り済みのため飛ばしたもの（message / file:<名前>）。
     """
     if not st.slack_channel and client.bot_token:
@@ -164,7 +165,7 @@ def post_slack(r: Report, st: Settings, client: SlackClient, *, force: bool = Fa
             skipped.append(item)
             return
         send()
-        if log:
+        if log and record:
             posts.add(log, k)  # 送れたらすぐ記録する（次の送信で落ちても、ここまでは送り直さない）
 
     msg, blocks = text.slack_blocks(r.summary, r.project, st.space_url)
