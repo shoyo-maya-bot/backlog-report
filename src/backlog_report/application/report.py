@@ -10,7 +10,7 @@ from pathlib import Path
 from ..config import Settings, local_today
 from ..domain.model import Issue, Milestone
 from ..domain.progress import Summary, burndown, countable, is_done, snapshot_gaps, summarize
-from ..infrastructure import snapshots
+from ..infrastructure import posts, snapshots
 from ..infrastructure.backlog import BacklogPort, load_all
 from ..infrastructure.slack import SlackClient
 from ..rendering import charts, text
@@ -54,8 +54,7 @@ def build(
         milestones = [m for m in milestones if not m.archived]  # 終了（アーカイブ）したものは指定したときだけ
     if assignee:
         issues = [i for i in issues if i.assignee == assignee]
-    first = "未対応"
-    s = summarize(issues, milestones, today, st.done_statuses, st.due_soon_days, first, st.parent_child)
+    s = summarize(issues, milestones, today, st.done_statuses, st.due_soon_days, st.first_status, st.parent_child)
     return Report(s, st.project_key, issues, milestones)
 
 
@@ -63,7 +62,14 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
     out_dir.mkdir(parents=True, exist_ok=True)
     chart_links: dict[str, str] = {}
     if with_charts:
-        g = charts.gantt(r.issues, r.summary.today, st.done_statuses, out_dir / "gantt.png", f"ガントチャート（{r.project}）")
+        g = charts.gantt(
+            r.issues,
+            r.summary.today,
+            st.done_statuses,
+            out_dir / "gantt.png",
+            f"ガントチャート（{r.project}）",
+            first_status=st.first_status,
+        )
         if g:
             r.files["gantt"] = g
             chart_links["ガントチャート"] = g.name
@@ -110,14 +116,34 @@ def record_snapshot(r: Report, st: Settings) -> None:
         snapshots.record(Path(st.snapshot_file), r.summary.today, rows)
 
 
-def post_slack(r: Report, st: Settings, client: SlackClient) -> None:
+def post_slack(r: Report, st: Settings, client: SlackClient, *, force: bool = False) -> list[str]:
+    """Slack に本文とグラフを送る. 送れたものは 1 件ずつ st.post_log に記録し、同じ日・同じ送り先・同じプロジェクトには二度送らない.
+
+    途中（画像のアップロードなど）で失敗して再実行しても、送れていた本文や画像は送り直さない。force で記録を無視して送る。
+    戻り値は、送り済みのため飛ばしたもの（message / file:<名前>）。
+    """
     if not st.slack_channel and client.bot_token:
         raise ValueError("slack.channel を設定してください（Bot トークンで投稿するとき）")
+    log = Path(st.post_log) if st.post_log else None
+    done = posts.load(log) if log and not force else set()
+    skipped: list[str] = []
+
+    def once(item: str, send) -> None:
+        k = posts.key(r.summary.today, st.slack_channel, r.project, item)
+        if k in done:
+            skipped.append(item)
+            return
+        send()
+        if log:
+            posts.add(log, k)  # 送れたらすぐ記録する（次の送信で落ちても、ここまでは送り直さない）
+
     msg, blocks = text.slack_blocks(r.summary, r.project, st.space_url)
-    client.post(st.slack_channel, msg, blocks)
-    for key, path in r.files.items():
-        if key != "markdown":
-            client.upload(st.slack_channel, path, path.stem)
+    once("message", lambda: client.post(st.slack_channel, msg, blocks))
+    if client.bot_token:  # Webhook では画像を送れない（記録もしない）
+        for key, path in r.files.items():
+            if key != "markdown":
+                once(f"file:{path.name}", lambda path=path: client.upload(st.slack_channel, path, path.stem))
+    return skipped
 
 
 def update_wiki(r: Report, st: Settings, port: BacklogPort) -> str:

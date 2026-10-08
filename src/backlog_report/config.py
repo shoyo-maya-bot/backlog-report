@@ -48,6 +48,7 @@ class Settings:
     project_key: str = ""
     mock_dir: str = ""  # 指定すると API の代わりにこのフォルダの JSON を読む（試行・テスト用）
     done_statuses: list[str] = field(default_factory=lambda: ["完了"])
+    first_status: str = "未対応"  # 未着手とみなす状態（開始日を過ぎて未着手・ガントの「未着手」の色）
     milestones: list[str] = field(default_factory=list)  # 空ならすべて
     due_soon_days: int = 3
     # 完了率・バーンダウン・担当者別の残り時間の数え方: children（子課題だけ）/ parents（親課題だけ）/ both（両方）
@@ -55,6 +56,7 @@ class Settings:
     completion_date: str = "updated"  # 完了日の推定: updated（最終更新日）
     output_dir: str = "output"
     snapshot_file: str = "data/snapshots.csv"
+    post_log: str = "data/posted.csv"  # Slack に送ったものの記録（再実行で二重に投稿しないため）
     slack_channel: str = ""
     wiki_page: str = ""  # 例: 進捗レポート/週次。空なら Wiki は更新しない
     today: date | None = None
@@ -80,12 +82,14 @@ def load_settings(path: Path) -> Settings:
         project_key=str(b.get("project_key", "")),
         mock_dir=str(b.get("mock_dir", "") or ""),
         done_statuses=list(r.get("done_statuses", ["完了"])),
+        first_status=str(r.get("first_status") or "未対応"),
         milestones=[str(m) for m in r.get("milestones", []) or []],
         due_soon_days=int(r.get("due_soon_days", 3)),
         parent_child=str(r.get("parent_child", "children")),
         completion_date=str(r.get("completion_date", "updated")),
         output_dir=str(r.get("output_dir", "output")),
         snapshot_file=str(r.get("snapshot_file", "data/snapshots.csv")),
+        post_log=str(s.get("post_log", "data/posted.csv") or ""),
         slack_channel=str(s.get("channel", "")),
         wiki_page=str(w.get("page", "") or ""),
         timezone=str(os.environ.get(TZ_ENV) or r.get("timezone") or DEFAULT_TZ),

@@ -38,12 +38,21 @@ def _save(fig, path: Path) -> Path:
     return path
 
 
-def gantt(issues: list[Issue], today: date, done_statuses: list[str], path: Path, title: str, limit: int = 40) -> Path | None:
-    rows = [i for i in issues if i.due][:limit]
+def gantt(
+    issues: list[Issue],
+    today: date,
+    done_statuses: list[str],
+    path: Path,
+    title: str,
+    limit: int = 40,
+    first_status: str = "未対応",
+) -> Path | None:
+    """期限のある課題を開始日（無ければ期限日）の順に並べ、先頭の limit 件を描く. first_status の課題は「未着手」の色にする."""
+    # 並べ替えてから切る（先に切ると、API の返した順の先頭 limit 件だけが残り、並びの先頭の課題が抜けることがある）
+    rows = sorted((i for i in issues if i.due), key=lambda i: (i.start or i.due, i.due, i.key))[:limit]
     if not rows:
         return None
     _font()
-    rows.sort(key=lambda i: (i.start or i.due, i.due, i.key))
     fig, ax = plt.subplots(figsize=(11, max(2.5, 0.32 * len(rows) + 1.2)))
     for n, i in enumerate(rows):
         start = i.start or i.due
@@ -52,7 +61,7 @@ def gantt(issues: list[Issue], today: date, done_statuses: list[str], path: Path
             color = COLORS["done"]
         elif i.due < today:
             color = COLORS["delayed"]
-        elif i.status != "未対応":
+        elif i.status != first_status:
             color = COLORS["doing"]
         else:
             color = COLORS["todo"]

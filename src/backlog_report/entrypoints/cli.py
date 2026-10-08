@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--wiki", action="store_true", help="Backlog Wiki を更新する")
     b.add_argument("--no-charts", action="store_true")
     b.add_argument("--no-snapshot", action="store_true", help="残量を記録しない")
+    b.add_argument("--force-post", action="store_true", help="今日すでに送ったレポートでも Slack に送り直す（既定は送り済みなら飛ばす）")
     b.add_argument("--fail-on-delay", action="store_true")
     sub.add_parser("bot", help="Slack ボットを起動する（Socket Mode）")
     return p
@@ -74,8 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     st = _settings(args)
     base = args.config.resolve().parent
     # 相対パスは設定ファイルの場所から
-    for attr in ("output_dir", "snapshot_file"):
-        if not Path(getattr(st, attr)).is_absolute():
+    for attr in ("output_dir", "snapshot_file", "post_log"):
+        if getattr(st, attr) and not Path(getattr(st, attr)).is_absolute():
             setattr(st, attr, str(base / getattr(st, attr)))
     try:
         port = make_port(st, base)
@@ -104,8 +105,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"警告: {w}", file=sys.stderr)
             if args.slack:
                 client = SlackClient(bot_token=_opt("SLACK_BOT_TOKEN"), webhook_url=_opt("SLACK_WEBHOOK_URL"))
-                report.post_slack(r, st, client)
-                print(f"Slack に投稿しました: {st.slack_channel or 'Webhook'}")
+                skipped = report.post_slack(r, st, client, force=args.force_post)
+                if skipped:
+                    print(
+                        f"Slack: 今日すでに送ったものは送りませんでした（{', '.join(skipped)}。送り直すときは --force-post）",
+                        file=sys.stderr,
+                    )
+                print(f"Slack に投稿しました: {st.slack_channel or 'Webhook'}" + ("（送り済みのものを除く）" if skipped else ""))
             if args.wiki:
                 print(f"Wiki を更新しました: {report.update_wiki(r, st, port)}")
     except ValueError as e:

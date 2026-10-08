@@ -4,8 +4,11 @@
 # バーンダウンの実績（data/snapshots.csv）は、専用のブランチ report-data にコミットして残す（無料・期限なし）。
 # Actions のキャッシュは 7 日使わないと消えるので、記録の置き場所には使わない。
 # - report ジョブ: 毎日実行して残量を記録する（通知はしない）
-# - save-snapshots ジョブ: 記録を report-data ブランチに保存する
-# - notify ジョブ: 月曜（と手動実行のとき）だけ Slack と Wiki へ送る。通知が失敗しても、記録の保存には影響しない
+# - notify ジョブ: 月曜（と手動実行のとき）だけ Slack と Wiki へ送る。Slack に送ったものは data/posted.csv に記録し、
+#   再実行しても同じ日のレポートを二重に投稿しない
+# - save-snapshots ジョブ: 記録（snapshots.csv・posted.csv）を report-data ブランチに保存する。通知が失敗しても保存する
+# - report-data ブランチが「無い」（初回）のと「読めない」（通信の失敗・権限）を git ls-remote --exit-code で区別する。
+#   読めないときは止める（空の記録から始めて、これまでの記録を上書きで消さないように）
 # - リポジトリへの書き込み（contents: write）は、記録をコミットする save-snapshots ジョブだけに与える。
 #   Backlog・Slack の秘密情報を使うジョブは読み取りだけ
 # - 「今日」は BACKLOG_REPORT_TIMEZONE（日本時間）で決める。Actions の時計は UTC なので、OS の日付は使わない
@@ -39,15 +42,29 @@ jobs:
           python-version: "3.12"
       - run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
       - run: pip install -e . -c constraints.txt
-      # 前回までの記録を report-data ブランチから取り出す（初回はブランチが無いので空から始める）
-      - name: restore snapshots
+      # 前回までの記録を report-data ブランチから取り出す. ls-remote --exit-code は、ブランチが無いと 2、
+      # 通信の失敗や権限の不足ではそれ以外を返す. 2（初回）のときだけ空から始め、それ以外の失敗では止める
+      - name: restore records
+        env:
+          TOKEN: ${{ github.token }}   # 読み取りだけ（このジョブの権限は contents: read）
         run: |
           mkdir -p data
-          if git fetch --depth=1 origin report-data; then
-            git show FETCH_HEAD:snapshots.csv > data/snapshots.csv
-          else
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          rc=0
+          git -c "http.extraheader=$auth" ls-remote --exit-code --heads origin report-data || rc=$?
+          if [ "$rc" = 2 ]; then
             echo "::notice::report-data ブランチがまだありません（初回）。記録を新しく作ります"
+          elif [ "$rc" != 0 ]; then
+            echo "::error::report-data ブランチを確認できませんでした（終了コード $rc）。記録を消さないよう止めます"
+            exit 1
+          else
+            git -c "http.extraheader=$auth" fetch --depth=1 origin report-data
+            git show FETCH_HEAD:snapshots.csv > data/snapshots.csv
+            if git cat-file -e FETCH_HEAD:posted.csv 2>/dev/null; then
+              git show FETCH_HEAD:posted.csv > data/posted.csv
+            fi
           fi
+          [ -f data/posted.csv ] || echo "date,channel,project,item" > data/posted.csv
       - name: record（残量の記録とレポートのファイル. 通知はしない）
         run: backlog-report -c config.ci.yaml batch
         env:
@@ -55,12 +72,16 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: snapshots
-          path: data/snapshots.csv
+          path: |
+            data/snapshots.csv
+            data/posted.csv
           if-no-files-found: error
           retention-days: 1   # 次のジョブへ渡すだけ. 保管は report-data ブランチ
 
   save-snapshots:
-    needs: report
+    needs: [report, notify]
+    # 通知（notify）が失敗・スキップしても、記録が作れていれば保存する
+    if: ${{ always() && needs.report.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write   # report-data ブランチへの push だけに使う
@@ -72,15 +93,35 @@ jobs:
         with:
           name: snapshots
           path: ${{ runner.temp }}/snapshots
-      - name: commit snapshots to report-data
+      # notify ジョブが Slack に送ったときの記録（送らなかった日は無いので、失敗しても続ける）
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: posted
+          path: ${{ runner.temp }}/posted
+      - name: commit records to report-data
         run: |
-          if git fetch --depth=1 origin report-data; then
+          rc=0
+          git ls-remote --exit-code --heads origin report-data || rc=$?
+          if [ "$rc" = 0 ]; then
+            git fetch --depth=1 origin report-data
             git switch -c report-data FETCH_HEAD
-          else
+          elif [ "$rc" = 2 ]; then
             git switch --orphan report-data   # 初回: 履歴のない空のブランチを作る
+          else
+            echo "::error::report-data ブランチを確認できませんでした（終了コード $rc）。記録を上書きしないよう止めます"
+            exit 1
           fi
           cp "$RUNNER_TEMP/snapshots/snapshots.csv" snapshots.csv
-          git add snapshots.csv
+          # 送った記録は消さずに合わせる（ブランチにある分・report の時点の分・notify が送った分）
+          {
+            echo "date,channel,project,item"
+            for f in posted.csv "$RUNNER_TEMP/snapshots/posted.csv" "$RUNNER_TEMP/posted/posted.csv"; do
+              [ -f "$f" ] && tail -n +2 "$f"
+            done | sort -u
+          } > "$RUNNER_TEMP/posted.merged.csv"
+          mv "$RUNNER_TEMP/posted.merged.csv" posted.csv
+          git add snapshots.csv posted.csv
           if git diff --cached --quiet; then
             echo "記録に変更はありません"
             exit 0
@@ -89,7 +130,8 @@ jobs:
             commit -m "data: バーンダウンの記録 $(TZ=Asia/Tokyo date +%F)"
           git push origin report-data
 
-  # 通知は記録とは別のジョブ. Slack や Wiki が失敗しても、その日の記録は save-snapshots で残る
+  # 通知は記録とは別のジョブ. Slack や Wiki が失敗しても、その日の記録は save-snapshots で残る.
+  # Slack に送ったものは data/posted.csv に記録し、同じ日に再実行しても二重に投稿しない（送り直すときは --force-post）
   notify:
     needs: report
     runs-on: ubuntu-latest
@@ -110,15 +152,44 @@ jobs:
           python-version: "3.12"
       - if: steps.when.outputs.send == 'true'
         run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk && pip install -e . -c constraints.txt
-      # バーンダウンのグラフに今日までの記録を使う（記録はもう report ジョブで済んでいるので、ここでは足さない）
+      # バーンダウンのグラフに今日までの記録を使う（記録はもう report ジョブで済んでいるので、ここでは足さない）.
+      # posted.csv（前回までに送ったもの）も一緒に入っている
       - if: steps.when.outputs.send == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: snapshots
           path: data
+      # 同じ日の再実行（失敗したジョブだけの再実行を含む）で二重に投稿しないよう、送った記録は最新の report-data から読む
+      - if: steps.when.outputs.send == 'true'
+        name: latest post log
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          rc=0
+          git -c "http.extraheader=$auth" ls-remote --exit-code --heads origin report-data || rc=$?
+          if [ "$rc" = 0 ]; then
+            git -c "http.extraheader=$auth" fetch --depth=1 origin report-data
+            if git cat-file -e FETCH_HEAD:posted.csv 2>/dev/null; then
+              git show FETCH_HEAD:posted.csv > "$RUNNER_TEMP/posted.csv"
+              { cat data/posted.csv; tail -n +2 "$RUNNER_TEMP/posted.csv"; } | awk '!seen[$0]++' > "$RUNNER_TEMP/merged.csv"
+              mv "$RUNNER_TEMP/merged.csv" data/posted.csv
+            fi
+          elif [ "$rc" != 2 ]; then
+            echo "::error::report-data ブランチを確認できませんでした（終了コード $rc）。二重投稿を避けるため送らずに止めます"
+            exit 1
+          fi
       - if: steps.when.outputs.send == 'true'
         name: notify
         run: backlog-report -c config.ci.yaml batch --no-snapshot --slack --wiki
         env:
           BACKLOG_API_KEY: ${{ secrets.BACKLOG_API_KEY }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      # 送れたものの記録を save-snapshots ジョブへ渡す（途中で失敗しても、送れた分は記録する）
+      - if: ${{ always() && steps.when.outputs.send == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: posted
+          path: data/posted.csv
+          if-no-files-found: ignore
+          retention-days: 1
