@@ -75,7 +75,7 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
             chart_links["ガントチャート"] = g.name
         snap = Path(st.snapshot_file)
         for m in r.milestones:
-            unit = "hours" if any(i.estimated_hours for i in r.issues if m.name in i.milestones) else "count"
+            unit = _burndown_unit(r, m, st, snap)
             history = snapshots.load(snap, m.name, unit)
             gaps = snapshot_gaps(history, m, r.summary.today)
             if gaps:
@@ -97,6 +97,33 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
     return r
 
 
+def _natural_unit(r: Report, m: Milestone, st: Settings) -> str:
+    """マイルストーンに見積時間のある課題があれば hours、無ければ count（その日のバーンダウンの単位）."""
+    return "hours" if any(i.estimated_hours for i in r.issues if m.name in i.milestones) else "count"
+
+
+def _burndown_unit(r: Report, m: Milestone, st: Settings, snap: Path) -> str:
+    """バーンダウンの単位. 期間内の記録の単位（件数／見積時間）が今日の単位と混ざるときは、警告して件数で描く.
+
+    件数は毎日同じ数え方で記録しているが、見積時間は見積を入れる前の日は 0 なので、時間で描くと線が壊れる。
+    """
+    unit = _natural_unit(r, m, st)
+    start = m.start or date.min
+    recorded = {d: u for d, u in snapshots.load_units(snap, m.name).items() if start <= d < r.summary.today and u}
+    others = sorted(d for d, u in recorded.items() if u != unit)
+    if not others:
+        return unit
+    days = {u: sum(1 for v in recorded.values() if v == u) for u in snapshots.UNITS}
+    first, last = others[0], others[-1]
+    span = str(first) if first == last else f"{first}〜{last}"
+    r.warnings.append(
+        f"バーンダウン {m.name}: 期間内の記録の単位が混ざっています（件数 {days['count']} 日・見積時間 {days['hours']} 日、"
+        f"今日は{'見積時間' if unit == 'hours' else '件数'}。今日と違う日: {span}）。件数で描きます"
+        "（見積時間で描くには、期間の初めから見積時間を入れてください）"
+    )
+    return "count"
+
+
 def _gap_message(name: str, gaps: list[tuple[date, date]]) -> str:
     days = sum((b - a).days + 1 for a, b in gaps)
     spans = "、".join(str(a) if a == b else f"{a}〜{b}" for a, b in gaps[:5]) + ("、…" if len(gaps) > 5 else "")
@@ -111,7 +138,7 @@ def record_snapshot(r: Report, st: Settings) -> None:
     for m in r.milestones:
         group = [i for i in countable(r.issues, st.parent_child) if m.name in i.milestones]
         open_ = [i for i in group if not is_done(i, st.done_statuses)]
-        rows.append((m.name, len(open_), sum(i.estimated_hours or 0 for i in open_)))
+        rows.append((m.name, len(open_), sum(i.estimated_hours or 0 for i in open_), _natural_unit(r, m, st)))
     if rows:
         snapshots.record(Path(st.snapshot_file), r.summary.today, rows)
 

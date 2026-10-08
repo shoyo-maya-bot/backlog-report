@@ -64,11 +64,37 @@ class Settings:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+def _str_list(section: dict[str, Any], name: str, key: str, default: list[str]) -> list[str]:
+    """リストの設定項目. 文字列（や数値）が 1 つだけ書かれていれば 1 要素のリストとして扱う.
+
+    `done_statuses: 完了` を list() すると ["完", "了"] に分かれて黙って壊れるため。mapping などは明示的に誤りにする。
+    """
+    value = section.get(key)
+    if value is None:
+        return list(default)
+    if isinstance(value, str | int | float) and not isinstance(value, bool):
+        value = [value]
+    if not isinstance(value, list) or any(isinstance(v, dict | list) or v is None for v in value):
+        raise ValueError(f"{name}.{key} は文字列のリストで書いてください（例: [完了] か - 完了 の行）: {value!r}")
+    return [str(v) for v in value]
+
+
+def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
+    sec = data.get(name)
+    if sec is None:
+        return {}
+    if not isinstance(sec, dict):
+        raise ValueError(f"config.yaml の {name} は項目の並び（mapping）で書いてください: {sec!r}")
+    return sec
+
+
 def load_settings(path: Path) -> Settings:
     if not path.is_file():
         raise FileNotFoundError(f"設定ファイルが見つかりません: {path}（config.example.yaml をコピーしてください）")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    b, r, s, w = data.get("backlog", {}), data.get("report", {}), data.get("slack", {}), data.get("wiki", {})
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: 設定は項目の並び（mapping）で書いてください")
+    b, r, s, w = (_section(data, k) for k in ("backlog", "report", "slack", "wiki"))
     leaked = [
         f"{sec}.{k}"
         for sec, d in (("backlog", b), ("slack", s))
@@ -81,9 +107,9 @@ def load_settings(path: Path) -> Settings:
         space_url=str(b.get("space_url", "")).rstrip("/"),
         project_key=str(b.get("project_key", "")),
         mock_dir=str(b.get("mock_dir", "") or ""),
-        done_statuses=list(r.get("done_statuses", ["完了"])),
+        done_statuses=_str_list(r, "report", "done_statuses", ["完了"]),
         first_status=str(r.get("first_status") or "未対応"),
-        milestones=[str(m) for m in r.get("milestones", []) or []],
+        milestones=_str_list(r, "report", "milestones", []),
         due_soon_days=int(r.get("due_soon_days", 3)),
         parent_child=str(r.get("parent_child", "children")),
         completion_date=str(r.get("completion_date", "updated")),

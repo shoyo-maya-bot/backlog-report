@@ -88,29 +88,73 @@ def mrkdwn_escape(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+# Slack の上限（https://api.slack.com/reference/block-kit/blocks）. 超えると invalid_blocks で投稿そのものが失敗する
+SLACK_MAX_BLOCKS = 50  # 1 メッセージのブロック数
+SLACK_SECTION_TEXT = 3000  # section の text の文字数
+SLACK_HEADER_TEXT = 150  # header の plain_text の文字数
+SLACK_DELAYED_ROWS = 10  # 期限超過の一覧に載せる件数
+
+
+def _clip(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def fit_lines(title: str, lines: list[str], *, hidden: int = 0, limit: int = SLACK_SECTION_TEXT) -> str:
+    """見出しと行を、上限の文字数（limit）に収まるだけ載せる. 載らなかった行と hidden 件は「…ほか N 件」にまとめる.
+
+    1 行目から入らないほど長い行は、切り詰めて載せる。行が無ければ「なし」。
+    """
+    if not lines and not hidden:
+        return f"{title}\nなし"
+
+    def build(kept: list[str]) -> str:
+        rest = len(lines) - len(kept) + hidden
+        return "\n".join([title, *kept] + ([f"…ほか {rest} 件"] if rest else []))
+
+    kept: list[str] = []
+    for line in lines:
+        if len(build([*kept, line])) > limit:
+            break
+        kept.append(line)
+    if not kept and lines:  # 1 行目から入らない: 切り詰めて 1 行だけ載せる
+        over = len(build([lines[0]])) - limit
+        kept = [_clip(lines[0], max(1, len(lines[0]) - over))]
+    return build(kept)
+
+
+def limit_blocks(blocks: list[dict[str, Any]], limit: int = SLACK_MAX_BLOCKS) -> list[dict[str, Any]]:
+    """ブロック数を上限に収める. 超えた分は省き、最後に「ほか N ブロックを省略」を載せる."""
+    if len(blocks) <= limit:
+        return blocks
+    dropped = len(blocks) - (limit - 1)
+    note = {
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f"…ほか {dropped} ブロックを省略しました（全文はレポートのファイルを見てください）"}],
+    }
+    return [*blocks[: limit - 1], note]
+
+
 def slack_blocks(s: Summary, project: str, space_url: str = "") -> tuple[str, list[dict[str, Any]]]:
+    """Slack のメッセージ（通知の文と blocks）. section は 3000 字・メッセージは 50 ブロックの上限に収める."""
     esc = mrkdwn_escape
 
     def link(key: str) -> str:
         return f"<{space_url}/view/{key}|{esc(key)}>" if space_url else esc(key)
 
     text = f"進捗レポート {esc(project)}（{s.today}）: 完了 {s.done}/{s.total}、期限超過 {len(s.delayed)} 件"
-    ms = "\n".join(
+    ms = [
         f"• *{esc(m.name)}* {m.done}/{m.total}（{_pct(m.ratio)}）経過 {_pct(m.expected_ratio(s.today))} {_state(m.ratio, m.expected_ratio(s.today))}"
         for m in s.milestones
-    )
-    delayed = (
-        "\n".join(f"• {link(i.key)} {esc(i.summary)}（{esc(i.assignee or '未割当')}、期限 {i.due}）" for i in s.delayed[:10]) or "なし"
-    )
-    if len(s.delayed) > 10:
-        delayed += f"\n…ほか {len(s.delayed) - 10} 件"
+    ]
+    delayed = [f"• {link(i.key)} {esc(i.summary)}（{esc(i.assignee or '未割当')}、期限 {i.due}）" for i in s.delayed[:SLACK_DELAYED_ROWS]]
+    hidden = max(0, len(s.delayed) - SLACK_DELAYED_ROWS)
     blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": f"進捗レポート {project}（{s.today}）"}},
+        {"type": "header", "text": {"type": "plain_text", "text": _clip(f"進捗レポート {project}（{s.today}）", SLACK_HEADER_TEXT)}},
         {
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"完了 *{s.done}/{s.total}* ／ 期限超過 *{len(s.delayed)}* ／ 期限間近 {len(s.due_soon)}"},
         },
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*マイルストーン*\n{ms or 'なし'}"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*期限超過*\n{delayed}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": fit_lines("*マイルストーン*", ms)}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": fit_lines("*期限超過*", delayed, hidden=hidden)}},
     ]
-    return text, blocks
+    return text, limit_blocks(blocks)
