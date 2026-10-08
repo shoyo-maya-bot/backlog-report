@@ -8,8 +8,6 @@ from typing import Any
 from ..domain.model import Issue
 from ..domain.progress import Summary
 
-MAX_ROWS = 15
-
 
 def _pct(x: float | None) -> str:
     return "-" if x is None else f"{x * 100:.0f}%"
@@ -23,14 +21,13 @@ def _state(ratio: float, expected: float | None) -> str:
 
 
 def _issue_rows(issues: list[Issue], today: date, link) -> list[str]:
+    """Markdown・Wiki の課題の表. 全件を載せる（件数で切るのは Slack だけ: slack_blocks の SLACK_DELAYED_ROWS と文字数の上限）."""
     rows = ["| 課題 | 件名 | 担当 | 状態 | 期限 | 超過 |", "|---|---|---|---|---|---|"]
-    for i in issues[:MAX_ROWS]:
+    for i in issues:
         over = f"{(today - i.due).days} 日" if i.due and i.due < today else ""
         rows.append(
             f"| {link(i.key)} | {i.summary.replace('|', '／')} | {i.assignee or '（未割当）'} | {i.status} | {i.due or ''} | {over} |"
         )
-    if len(issues) > MAX_ROWS:
-        rows.append(f"| … | ほか {len(issues) - MAX_ROWS} 件 | | | | |")
     return rows
 
 

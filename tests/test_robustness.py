@@ -603,3 +603,206 @@ def test_fit_lines_and_limit_blocks():
     assert len(got) == 50 and got[48]["text"]["text"] == "48"
     assert "ほか 11 ブロックを省略" in got[-1]["elements"][0]["text"]
     assert text.limit_blocks(blocks[:50]) == blocks[:50]
+
+
+# --- 親子が別のマイルストーン・バーンダウンの単位と数える課題 ------------------------------------------
+
+
+def _pc(key: str, ms: str, *, parent: str = "", est: float | None = None, status: str = "未対応"):
+    from backlog_report.domain.model import Issue
+
+    return Issue(key, key, status, "A", "タスク", (ms,), None, None, est, None, date(2026, 9, 1), date(2026, 9, 1), parent)
+
+
+def test_parent_in_other_milestone_than_children_is_counted_in_its_milestone():
+    """親が M1、子が M2 のとき、親は M1 で数える（子が別のマイルストーンにあることを理由に M1 から消さない）."""
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import burndown, summarize
+
+    m1 = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    m2 = Milestone("M2", date(2026, 9, 28), date(2026, 10, 9))
+    issues = [_pc("P", "M1"), _pc("C1", "M2", parent="P", status="完了"), _pc("C2", "M2", parent="P")]
+    s = summarize(issues, [m1, m2], date(2026, 10, 2), ["完了"])
+    by = {m.name: (m.total, m.done) for m in s.milestones}
+    assert by == {"M1": (1, 0), "M2": (2, 1)}
+    assert burndown(issues, m1, date(2026, 10, 2), ["完了"])[0].actual == 1  # M1 のバーンダウンも親を数える
+
+
+def test_parent_and_children_in_same_milestone_are_not_double_counted():
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+
+    m1 = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    issues = [_pc("P", "M1"), _pc("C1", "M1", parent="P"), _pc("C2", "M1", parent="P")]
+    assert (summarize(issues, [m1], date(2026, 10, 2), ["完了"]).milestones[0].total) == 2
+
+
+def test_record_snapshot_counts_parent_in_its_own_milestone(tmp_path: Path):
+    st = _settings(tmp_path)
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+
+    ms = [Milestone("M1", date(2026, 9, 28), date(2026, 10, 9)), Milestone("M2", date(2026, 9, 28), date(2026, 10, 9))]
+    issues = [_pc("P", "M1", est=5.0), _pc("C1", "M2", parent="P", est=2.0)]
+    r = report.Report(summarize(issues, ms, date(2026, 10, 2), ["完了"]), "X", issues, ms)
+    report.record_snapshot(r, st)
+    with Path(st.snapshot_file).open(encoding="utf-8") as fh:
+        rows = {row["milestone"]: row for row in csv.DictReader(fh)}
+    assert (rows["M1"]["remaining_count"], float(rows["M1"]["remaining_hours"]), rows["M1"]["unit"]) == ("1", 5.0, "hours")
+
+
+def test_burndown_unit_follows_counted_issues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """見積時間が親（子があるので数えない）にだけあるとき、時間で描くと残りが 0 h の線になる. 数える課題の集合で単位を決める."""
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+    from backlog_report.rendering import charts
+
+    st = _settings(tmp_path)
+    ms = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    issues = [_pc("P", "M1", est=8.0), _pc("C1", "M1", parent="P"), _pc("C2", "M1", parent="P")]
+    r = report.Report(summarize(issues, [ms], date(2026, 10, 2), ["完了"]), "X", issues, [ms])
+    drawn: dict[str, object] = {}
+    monkeypatch.setattr(charts, "burndown", lambda pts, path, title, ylabel: drawn.update(pts=pts, ylabel=ylabel))
+    monkeypatch.setattr(charts, "gantt", lambda *a, **k: None)
+    report.write_files(r, st, tmp_path / "out")
+    assert drawn["ylabel"] == "残り件数"
+    assert drawn["pts"][0].ideal == 2  # 子 2 件
+    report.record_snapshot(r, st)
+    assert snapshots.load_units(Path(st.snapshot_file), "M1") == {date(2026, 10, 2): "count"}
+
+
+# --- 200 でも JSON でない Backlog の応答 ----------------------------------------------------------------
+
+
+class _Raw:
+    """本文をそのまま返す応答（200）."""
+
+    def __init__(self, body: bytes, ctype: str = "text/html; charset=utf-8"):
+        self.status, self.headers, self._body = 200, {"Content-Type": ctype}, body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _raw_opener(*bodies: bytes):
+    answers = list(bodies)
+    sent: list = []
+
+    def opener(req, timeout=None):
+        sent.append(req)
+        return _Raw(answers.pop(0))
+
+    opener.sent = sent  # type: ignore[attr-defined]
+    return opener
+
+
+HTML = b"<html><body>Maintenance</body></html>"
+
+
+def test_backlog_get_non_json_200_is_response_error():
+    from backlog_report.infrastructure.backlog import BacklogApi, BacklogResponseError
+
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=_raw_opener(HTML), sleep=lambda _s: None)
+    with pytest.raises(BacklogResponseError, match="JSON ではありません") as e:
+        api.project()
+    assert not isinstance(e.value, ValueError)  # 設定・引数の誤り（2）と取り違えない
+
+
+def test_backlog_get_wrong_shape_is_response_error():
+    from backlog_report.infrastructure.backlog import BacklogApi, BacklogResponseError
+
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=_raw_opener(b'{"id": 1}', b'{"errors": []}'), sleep=lambda _s: None)
+    with pytest.raises(BacklogResponseError, match="課題の一覧"):
+        api.issues()
+
+
+def test_backlog_write_non_json_200_is_response_error():
+    from backlog_report.infrastructure.backlog import BacklogApi, BacklogResponseError
+
+    opener = _raw_opener(b"[]", b'{"id": 1}', HTML)  # Wiki の一覧・プロジェクト・POST
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=opener, sleep=lambda _s: None)
+    with pytest.raises(BacklogResponseError, match="届いている可能性"):
+        api.save_wiki("進捗", "本文")
+    assert [r.get_method() for r in opener.sent] == ["GET", "GET", "POST"]  # 1 回だけ送る
+
+
+def test_cli_non_json_200_exits_3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backlog_report.entrypoints import cli as cli_mod
+    from backlog_report.infrastructure.backlog import BacklogApi
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("backlog: {project_key: X, space_url: 'https://example.backlog.com'}\n", encoding="utf-8")
+    monkeypatch.setenv("BACKLOG_API_KEY", "k")
+    monkeypatch.setattr(
+        cli_mod,
+        "make_port",
+        lambda st, base: BacklogApi(st.space_url, st.project_key, "k", opener=_raw_opener(HTML), sleep=lambda _s: None),
+    )
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = run_main(main, ["--env", "/nonexistent/.env", "-c", str(cfg), "report"])
+    assert rc == 3, err.getvalue()
+    assert "JSON ではありません" in err.getvalue() and "Traceback" not in err.getvalue()
+
+
+def test_slack_bot_non_json_200_returns_message(tmp_path: Path):
+    from backlog_report.infrastructure.backlog import BacklogApi
+
+    st, _ = _bot_env(tmp_path)
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=_raw_opener(HTML), sleep=lambda _s: None)
+    res = slack_bot.handle("", api, st)
+    assert res["response_type"] == "ephemeral" and "応答を読めませんでした" in res["text"]
+    assert "使い方" not in res["text"]  # 入力の誤りとして扱わない
+
+
+# --- /progress の応答の見え方 --------------------------------------------------------------------------
+
+
+def test_slack_bot_progress_is_ephemeral_by_default(tmp_path: Path):
+    st, port = _bot_env(tmp_path)
+    res = slack_bot.handle("", port, st)
+    assert res["response_type"] == "ephemeral" and res["blocks"]
+
+
+def test_slack_bot_progress_channel_option_posts_in_channel(tmp_path: Path):
+    st, port = _bot_env(tmp_path)
+    res = slack_bot.handle("--channel", port, st)
+    assert res["response_type"] == "in_channel" and res["blocks"]
+    assert "--channel" not in res["text"]  # マイルストーン名として扱わない
+
+
+def test_slack_bot_unknown_option_is_error(tmp_path: Path):
+    st, port = _bot_env(tmp_path)
+    res = slack_bot.handle("--chanel", port, st)
+    assert res["response_type"] == "ephemeral" and "知らないオプション" in res["text"]
+
+
+# --- Markdown・Wiki は全件、件数で切るのは Slack だけ ---------------------------------------------------
+
+
+def test_markdown_and_wiki_list_all_delayed_issues_slack_is_limited():
+    from backlog_report.domain.model import Issue
+    from backlog_report.domain.progress import summarize
+    from backlog_report.rendering import text
+
+    issues = [
+        Issue(
+            f"X-{n}", f"件名{n}", "未対応", "A", "タスク", ("M1",), None, date(2026, 9, 1), None, None, date(2026, 9, 1), date(2026, 9, 1)
+        )
+        for n in range(1, 31)
+    ]
+    s = summarize(issues, [], date(2026, 10, 2), ["完了"])
+    md = text.markdown(s, "X")
+    wiki = text.wiki(s, "X")
+    for body in (md, wiki):
+        assert all(f"| X-{n} |" in body for n in range(1, 31)), "Markdown・Wiki は全件"
+        assert "ほか" not in body
+    _, blocks = text.slack_blocks(s, "X")
+    delayed = next(b["text"]["text"] for b in blocks if b.get("text", {}).get("text", "").startswith("*期限超過*"))
+    assert "X-30" not in delayed and "…ほか 20 件" in delayed  # Slack は上限で切る

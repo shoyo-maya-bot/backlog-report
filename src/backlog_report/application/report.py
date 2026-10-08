@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..config import Settings, local_today
 from ..domain.model import Issue, Milestone
-from ..domain.progress import Summary, burndown, countable, is_done, snapshot_gaps, summarize
+from ..domain.progress import Summary, burndown, is_done, milestone_group, snapshot_gaps, summarize
 from ..infrastructure import posts, snapshots
 from ..infrastructure.backlog import BacklogPort, load_all
 from ..infrastructure.slack import SlackClient
@@ -98,8 +98,11 @@ def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = T
 
 
 def _natural_unit(r: Report, m: Milestone, st: Settings) -> str:
-    """マイルストーンに見積時間のある課題があれば hours、無ければ count（その日のバーンダウンの単位）."""
-    return "hours" if any(i.estimated_hours for i in r.issues if m.name in i.milestones) else "count"
+    """バーンダウンで数える課題（milestone_group）に見積時間のあるものがあれば hours、無ければ count（その日の単位）.
+
+    数えない課題（子のある親など）の見積時間で hours にすると、数える課題の見積が 0 h の線になるため、同じ集合で決める。
+    """
+    return "hours" if any(i.estimated_hours for i in milestone_group(r.issues, m.name, st.parent_child)) else "count"
 
 
 def _burndown_unit(r: Report, m: Milestone, st: Settings, snap: Path) -> str:
@@ -136,7 +139,7 @@ def _gap_message(name: str, gaps: list[tuple[date, date]]) -> str:
 def record_snapshot(r: Report, st: Settings) -> None:
     rows = []
     for m in r.milestones:
-        group = [i for i in countable(r.issues, st.parent_child) if m.name in i.milestones]
+        group = milestone_group(r.issues, m.name, st.parent_child)
         open_ = [i for i in group if not is_done(i, st.done_statuses)]
         rows.append((m.name, len(open_), sum(i.estimated_hours or 0 for i in open_), _natural_unit(r, m, st)))
     if rows:
