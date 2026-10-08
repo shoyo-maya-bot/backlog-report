@@ -5,6 +5,9 @@ BacklogApi は本物の API（HTTPS・API キー）、MockBacklog は同じ形�
 
 読み取り（GET）は devtools_common の HttpClient で送り、429 / 5xx / 通信エラーを待ってから再試行する。
 書き込み（Wiki の POST / PATCH）は二重に登録・更新しないよう、再試行せず 1 回だけ送る。
+200 でも本文が JSON でない（プロキシやメンテナンスの HTML など）・期待した形（一覧・オブジェクト）でない応答は
+BacklogResponseError（実行時エラー。CLI の終了コード 3）にする。JSONDecodeError は ValueError の仲間なので、
+そのままにすると「設定・引数の誤り（2）」と取り違えるため。
 """
 
 from __future__ import annotations
@@ -23,6 +26,28 @@ from devtools_common.httpclient import HttpClient, HttpError, safe_urlopen
 
 from ..config import DEFAULT_TZ, zone
 from ..domain.model import Issue, Milestone
+
+
+class BacklogResponseError(RuntimeError):
+    """Backlog の応答が読めない（200 でも JSON でない・形が違う）. 実行時エラー（設定の誤りではない）."""
+
+
+def _decode(body: bytes, what: str, content_type: str = "") -> Any:
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        head = body[:80].decode("utf-8", errors="replace").replace("\n", " ").strip()
+        kind = f"{content_type}、" if content_type else ""
+        raise BacklogResponseError(
+            f"Backlog の応答が JSON ではありません（{what}。{kind}先頭: {head!r}）。"
+            "space_url・ネットワーク（プロキシ）・Backlog の状態を確かめてください"
+        ) from None
+
+
+def _expect(value: Any, kind: type, what: str) -> Any:
+    if not isinstance(value, kind):
+        raise BacklogResponseError(f"Backlog の応答の形が違います（{what}。期待: {'一覧' if kind is list else 'オブジェクト'}）")
+    return value
 
 
 class BacklogPort(Protocol):
@@ -58,7 +83,9 @@ class BacklogApi:
     def _call(self, method: str, path: str, params: list[tuple[str, Any]] | None = None, form: dict[str, Any] | None = None) -> Any:
         query = [("apiKey", self.api_key), *(params or [])]
         if method == "GET":
-            return self._http.get(path, params=query).json()  # type: ignore[arg-type]  # 同じ名前の項目（projectId[]）を並べるため組の列
+            res = self._http.get(path, params=query)  # type: ignore[arg-type]  # 同じ名前の項目（projectId[]）を並べるため組の列
+            ctype = next((v for k, v in res.headers.items() if k.lower() == "content-type"), "")
+            return _decode(res.body, f"GET {path}", ctype)
         return self._write(method, path, query, form or {})
 
     def _write(self, method: str, path: str, query: list[tuple[str, Any]], form: dict[str, Any]) -> Any:
@@ -69,28 +96,39 @@ class BacklogApi:
         req.add_header("Accept", "application/json")
         try:
             with self._opener(req, timeout=self.timeout) as res:
-                return json.loads(res.read().decode("utf-8"))
+                body = res.read()
         except urllib.error.HTTPError as e:
             raise HttpError(e.code, f"{method} {path} が失敗しました（再試行していません）: {e.reason or ''}") from None
         except (urllib.error.URLError, TimeoutError) as e:
             raise HttpError(None, f"{method} {path} が失敗しました（再試行していません）: {getattr(e, 'reason', e)}") from None
+        return _decode(body, f"{method} {path}。書き込みは届いている可能性があります")
 
     def project(self) -> dict[str, Any]:
         if self._project is None:
-            self._project = self._call("GET", f"/projects/{urllib.parse.quote(self.project_key)}")
+            self._project = _expect(self._call("GET", f"/projects/{urllib.parse.quote(self.project_key)}"), dict, "プロジェクト")
         return self._project
 
     def versions(self) -> list[dict[str, Any]]:
-        return self._call("GET", f"/projects/{self.project()['id']}/versions")
+        return _expect(self._call("GET", f"/projects/{self.project()['id']}/versions"), list, "マイルストーンの一覧")
 
     def issues(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         offset = 0
         while True:
-            page = self._call(
-                "GET",
-                "/issues",
-                [("projectId[]", self.project()["id"]), ("count", self.PAGE), ("offset", offset), ("sort", "created"), ("order", "asc")],
+            page = _expect(
+                self._call(
+                    "GET",
+                    "/issues",
+                    [
+                        ("projectId[]", self.project()["id"]),
+                        ("count", self.PAGE),
+                        ("offset", offset),
+                        ("sort", "created"),
+                        ("order", "asc"),
+                    ],
+                ),
+                list,
+                "課題の一覧",
             )
             out += page
             if len(page) < self.PAGE:
@@ -98,7 +136,7 @@ class BacklogApi:
             offset += self.PAGE
 
     def find_wiki(self, name: str) -> dict[str, Any] | None:
-        pages = self._call("GET", "/wikis", [("projectIdOrKey", self.project_key)])
+        pages = _expect(self._call("GET", "/wikis", [("projectIdOrKey", self.project_key)]), list, "Wiki の一覧")
         return next((p for p in pages if p.get("name") == name), None)
 
     def save_wiki(self, name: str, content: str) -> dict[str, Any]:

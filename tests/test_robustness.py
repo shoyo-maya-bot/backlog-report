@@ -669,3 +669,115 @@ def test_burndown_unit_follows_counted_issues(tmp_path: Path, monkeypatch: pytes
     assert drawn["pts"][0].ideal == 2  # 子 2 件
     report.record_snapshot(r, st)
     assert snapshots.load_units(Path(st.snapshot_file), "M1") == {date(2026, 10, 2): "count"}
+
+
+# --- 200 でも JSON でない Backlog の応答 ----------------------------------------------------------------
+
+
+class _Raw:
+    """本文をそのまま返す応答（200）."""
+
+    def __init__(self, body: bytes, ctype: str = "text/html; charset=utf-8"):
+        self.status, self.headers, self._body = 200, {"Content-Type": ctype}, body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _raw_opener(*bodies: bytes):
+    answers = list(bodies)
+    sent: list = []
+
+    def opener(req, timeout=None):
+        sent.append(req)
+        return _Raw(answers.pop(0))
+
+    opener.sent = sent  # type: ignore[attr-defined]
+    return opener
+
+
+HTML = b"<html><body>Maintenance</body></html>"
+
+
+def test_backlog_get_non_json_200_is_response_error():
+    from backlog_report.infrastructure.backlog import BacklogApi, BacklogResponseError
+
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=_raw_opener(HTML), sleep=lambda _s: None)
+    with pytest.raises(BacklogResponseError, match="JSON ではありません") as e:
+        api.project()
+    assert not isinstance(e.value, ValueError)  # 設定・引数の誤り（2）と取り違えない
+
+
+def test_backlog_get_wrong_shape_is_response_error():
+    from backlog_report.infrastructure.backlog import BacklogApi, BacklogResponseError
+
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=_raw_opener(b'{"id": 1}', b'{"errors": []}'), sleep=lambda _s: None)
+    with pytest.raises(BacklogResponseError, match="課題の一覧"):
+        api.issues()
+
+
+def test_backlog_write_non_json_200_is_response_error():
+    from backlog_report.infrastructure.backlog import BacklogApi, BacklogResponseError
+
+    opener = _raw_opener(b"[]", b'{"id": 1}', HTML)  # Wiki の一覧・プロジェクト・POST
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=opener, sleep=lambda _s: None)
+    with pytest.raises(BacklogResponseError, match="届いている可能性"):
+        api.save_wiki("進捗", "本文")
+    assert [r.get_method() for r in opener.sent] == ["GET", "GET", "POST"]  # 1 回だけ送る
+
+
+def test_cli_non_json_200_exits_3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backlog_report.entrypoints import cli as cli_mod
+    from backlog_report.infrastructure.backlog import BacklogApi
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("backlog: {project_key: X, space_url: 'https://example.backlog.com'}\n", encoding="utf-8")
+    monkeypatch.setenv("BACKLOG_API_KEY", "k")
+    monkeypatch.setattr(
+        cli_mod,
+        "make_port",
+        lambda st, base: BacklogApi(st.space_url, st.project_key, "k", opener=_raw_opener(HTML), sleep=lambda _s: None),
+    )
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = run_main(main, ["--env", "/nonexistent/.env", "-c", str(cfg), "report"])
+    assert rc == 3, err.getvalue()
+    assert "JSON ではありません" in err.getvalue() and "Traceback" not in err.getvalue()
+
+
+def test_slack_bot_non_json_200_returns_message(tmp_path: Path):
+    from backlog_report.infrastructure.backlog import BacklogApi
+
+    st, _ = _bot_env(tmp_path)
+    api = BacklogApi("https://example.backlog.com", "X", "k", opener=_raw_opener(HTML), sleep=lambda _s: None)
+    res = slack_bot.handle("", api, st)
+    assert res["response_type"] == "ephemeral" and "応答を読めませんでした" in res["text"]
+    assert "使い方" not in res["text"]  # 入力の誤りとして扱わない
+
+
+# --- /progress の応答の見え方 --------------------------------------------------------------------------
+
+
+def test_slack_bot_progress_is_ephemeral_by_default(tmp_path: Path):
+    st, port = _bot_env(tmp_path)
+    res = slack_bot.handle("", port, st)
+    assert res["response_type"] == "ephemeral" and res["blocks"]
+
+
+def test_slack_bot_progress_channel_option_posts_in_channel(tmp_path: Path):
+    st, port = _bot_env(tmp_path)
+    res = slack_bot.handle("--channel", port, st)
+    assert res["response_type"] == "in_channel" and res["blocks"]
+    assert "--channel" not in res["text"]  # マイルストーン名として扱わない
+
+
+def test_slack_bot_unknown_option_is_error(tmp_path: Path):
+    st, port = _bot_env(tmp_path)
+    res = slack_bot.handle("--chanel", port, st)
+    assert res["response_type"] == "ephemeral" and "知らないオプション" in res["text"]

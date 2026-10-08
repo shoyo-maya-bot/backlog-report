@@ -71,7 +71,11 @@ API キー・トークンを config.yaml に書くとエラーで止まります
 |---|---|---|
 | Incoming Webhook | `SLACK_WEBHOOK_URL` | 文章の投稿のみ |
 | Bot トークン | `SLACK_BOT_TOKEN`（chat:write, files:write） | 投稿とグラフの画像 |
-| ボット（Socket Mode） | 上に加え `SLACK_APP_TOKEN`（connections:write）と、スラッシュコマンド `/progress` の登録 | `/progress`、`/progress マイルストーン名`、`/progress @担当者名` |
+| ボット（Socket Mode） | 上に加え `SLACK_APP_TOKEN`（connections:write）と、スラッシュコマンド `/progress` の登録 | `/progress`、`/progress マイルストーン名`、`/progress @担当者名`、`/progress … --channel` |
+
+`/progress` の応答は、**既定では打った本人にだけ見えます**（ephemeral）。期限超過の課題名や担当者名をチャンネル全員に出さないためです。
+チャンネルのみんなに見せるときだけ `--channel` を付けます（例: `/progress "フェーズ2 製造" --channel`）。知らないオプション（`--chanel` など）は
+本人だけに見えるエラーで返します。
 
 Slack アプリの作成とトークンの発行は、Slack のワークスペースの管理者のルールに従ってください（無料プランでも使えます）。
 
@@ -117,7 +121,10 @@ Windows のタスクスケジューラなら `backlog-report batch --slack --wik
 
 Backlog からの読み取り（GET）は、混雑（429）やサーバーの一時的なエラー（5xx）・通信エラーのとき、少し待って最大 3 回まで再試行します。
 Wiki の更新（POST / PATCH）と Slack への投稿は、二重に登録・投稿しないよう再試行しません（失敗したら終了コード `3`）。
-Slack ボット（`/progress`）は、引用符が閉じていない入力や Backlog の読み取りの失敗も、本人にだけ見えるメッセージで返します。
+Backlog が 200 でも JSON でない本文（プロキシのログイン画面やメンテナンスの HTML など）や、期待した形でない応答を返したときは、
+設定の誤りではなく実行時エラー（終了コード `3`）として、応答の種類と先頭を表示して止めます。Wiki の更新でこうなったときは、
+更新が届いている可能性があるので Wiki を確かめてください。
+Slack ボット（`/progress`）は、引用符が閉じていない入力や Backlog の読み取りの失敗（JSON でない応答を含む）も、本人にだけ見えるメッセージで返します。
 
 Slack に送った本文と画像は `slack.post_log`（既定 `data/posted.csv`）に 1 件ずつ記録し、同じ日・同じ送り先・同じプロジェクトには
 二度送りません（再実行や、画像の途中で失敗したあとの再実行で同じレポートが 2 回投稿されないように）。送り直すときは `batch --slack --force-post`。

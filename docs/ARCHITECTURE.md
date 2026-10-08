@@ -25,7 +25,7 @@ config ◀── すべての層が参照
 |---|---|---|
 | online（その場で確認） | `backlog-report report [--milestone] [--assignee]` | 朝会の前に状況を見る。Markdown を画面に出すだけで、何も送らない |
 | batch（定期実行） | `backlog-report batch [--slack] [--wiki]` | 週次の報告。ファイル出力・残量の記録・Slack 投稿・Wiki 更新。例: `docs/examples/scheduled-report.yml` |
-| slack-bot | `backlog-report bot` | Slack で `/progress マイルストーン名` と打つと、その場でレポートを返す |
+| slack-bot | `backlog-report bot` | Slack で `/progress マイルストーン名` と打つと、その場でレポートを返す（既定は本人だけに見える。`--channel` でチャンネルに出す） |
 
 ## 完了日とバーンダウン
 

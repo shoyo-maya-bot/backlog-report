@@ -23,7 +23,7 @@ from devtools_common.config import load_dotenv
 from .. import __version__
 from ..application import report
 from ..config import Settings, load_settings, secret
-from ..infrastructure.backlog import BacklogApi, BacklogPort, MockBacklog
+from ..infrastructure.backlog import BacklogApi, BacklogPort, BacklogResponseError, MockBacklog
 from ..infrastructure.slack import SlackClient
 
 
@@ -114,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Slack に投稿しました: {st.slack_channel or 'Webhook'}" + ("（送り済みのものを除く）" if skipped else ""))
             if args.wiki:
                 print(f"Wiki を更新しました: {report.update_wiki(r, st, port)}")
+    except BacklogResponseError as e:  # 200 でも JSON でない応答など: 設定の誤り（2）ではなく実行時エラー（3）
+        print(f"error: {e}", file=sys.stderr)
+        return common_cli.ExitCode.RUNTIME
     except ValueError as e:
         raise common_cli.UsageError(str(e)) from None
     s = r.summary

@@ -417,7 +417,9 @@ def test_slack_bot_handle(env: Path):
     port = MockBacklog(env / "samples/backlog")
     assert "使い方" in slack_bot.handle("help", port, st)["text"]
     res = slack_bot.handle('"フェーズ2 製造" @担当A', port, st)
-    assert res["response_type"] == "in_channel" and "フェーズ2 製造 / 担当A" in res["text"]
+    assert res["response_type"] == "ephemeral" and "フェーズ2 製造 / 担当A" in res["text"]  # 既定は本人だけ
+    shared = slack_bot.handle('"フェーズ2 製造" @担当A --channel', port, st)
+    assert shared["response_type"] == "in_channel" and "フェーズ2 製造 / 担当A" in shared["text"]
     bad = slack_bot.handle("ない", port, st)
     assert bad["response_type"] == "ephemeral" and "マイルストーンがありません" in bad["text"]
 
