@@ -603,3 +603,69 @@ def test_fit_lines_and_limit_blocks():
     assert len(got) == 50 and got[48]["text"]["text"] == "48"
     assert "ほか 11 ブロックを省略" in got[-1]["elements"][0]["text"]
     assert text.limit_blocks(blocks[:50]) == blocks[:50]
+
+
+# --- 親子が別のマイルストーン・バーンダウンの単位と数える課題 ------------------------------------------
+
+
+def _pc(key: str, ms: str, *, parent: str = "", est: float | None = None, status: str = "未対応"):
+    from backlog_report.domain.model import Issue
+
+    return Issue(key, key, status, "A", "タスク", (ms,), None, None, est, None, date(2026, 9, 1), date(2026, 9, 1), parent)
+
+
+def test_parent_in_other_milestone_than_children_is_counted_in_its_milestone():
+    """親が M1、子が M2 のとき、親は M1 で数える（子が別のマイルストーンにあることを理由に M1 から消さない）."""
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import burndown, summarize
+
+    m1 = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    m2 = Milestone("M2", date(2026, 9, 28), date(2026, 10, 9))
+    issues = [_pc("P", "M1"), _pc("C1", "M2", parent="P", status="完了"), _pc("C2", "M2", parent="P")]
+    s = summarize(issues, [m1, m2], date(2026, 10, 2), ["完了"])
+    by = {m.name: (m.total, m.done) for m in s.milestones}
+    assert by == {"M1": (1, 0), "M2": (2, 1)}
+    assert burndown(issues, m1, date(2026, 10, 2), ["完了"])[0].actual == 1  # M1 のバーンダウンも親を数える
+
+
+def test_parent_and_children_in_same_milestone_are_not_double_counted():
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+
+    m1 = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    issues = [_pc("P", "M1"), _pc("C1", "M1", parent="P"), _pc("C2", "M1", parent="P")]
+    assert (summarize(issues, [m1], date(2026, 10, 2), ["完了"]).milestones[0].total) == 2
+
+
+def test_record_snapshot_counts_parent_in_its_own_milestone(tmp_path: Path):
+    st = _settings(tmp_path)
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+
+    ms = [Milestone("M1", date(2026, 9, 28), date(2026, 10, 9)), Milestone("M2", date(2026, 9, 28), date(2026, 10, 9))]
+    issues = [_pc("P", "M1", est=5.0), _pc("C1", "M2", parent="P", est=2.0)]
+    r = report.Report(summarize(issues, ms, date(2026, 10, 2), ["完了"]), "X", issues, ms)
+    report.record_snapshot(r, st)
+    with Path(st.snapshot_file).open(encoding="utf-8") as fh:
+        rows = {row["milestone"]: row for row in csv.DictReader(fh)}
+    assert (rows["M1"]["remaining_count"], float(rows["M1"]["remaining_hours"]), rows["M1"]["unit"]) == ("1", 5.0, "hours")
+
+
+def test_burndown_unit_follows_counted_issues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """見積時間が親（子があるので数えない）にだけあるとき、時間で描くと残りが 0 h の線になる. 数える課題の集合で単位を決める."""
+    from backlog_report.domain.model import Milestone
+    from backlog_report.domain.progress import summarize
+    from backlog_report.rendering import charts
+
+    st = _settings(tmp_path)
+    ms = Milestone("M1", date(2026, 9, 28), date(2026, 10, 9))
+    issues = [_pc("P", "M1", est=8.0), _pc("C1", "M1", parent="P"), _pc("C2", "M1", parent="P")]
+    r = report.Report(summarize(issues, [ms], date(2026, 10, 2), ["完了"]), "X", issues, [ms])
+    drawn: dict[str, object] = {}
+    monkeypatch.setattr(charts, "burndown", lambda pts, path, title, ylabel: drawn.update(pts=pts, ylabel=ylabel))
+    monkeypatch.setattr(charts, "gantt", lambda *a, **k: None)
+    report.write_files(r, st, tmp_path / "out")
+    assert drawn["ylabel"] == "残り件数"
+    assert drawn["pts"][0].ideal == 2  # 子 2 件
+    report.record_snapshot(r, st)
+    assert snapshots.load_units(Path(st.snapshot_file), "M1") == {date(2026, 10, 2): "count"}

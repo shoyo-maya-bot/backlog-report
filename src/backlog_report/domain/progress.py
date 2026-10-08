@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -83,6 +82,15 @@ def countable(issues: list[Issue], mode: str = "children") -> list[Issue]:
     return [i for i in issues if i.key not in parents]
 
 
+def milestone_group(issues: list[Issue], milestone: str, mode: str = "children") -> list[Issue]:
+    """マイルストーンの完了率・バーンダウン・残量の記録・単位の決定に数える課題.
+
+    そのマイルストーンの課題だけで countable を当てる（親子の二重計上の回避は同じマイルストーンの中だけ）。
+    親と子が別のマイルストーンにあるときは、親も自分のマイルストーンで数える（子が別のマイルストーンにあることを理由に除かない）。
+    """
+    return countable([i for i in issues if milestone in i.milestones], mode)
+
+
 def summarize(
     issues: list[Issue],
     milestones: list[Milestone],
@@ -109,14 +117,10 @@ def summarize(
     s.delayed.sort(key=lambda i: (i.due or today, i.key))
     s.due_soon.sort(key=lambda i: (i.due or today, i.key))
 
-    by_ms: dict[str, list[Issue]] = defaultdict(list)
-    for i in counted:
-        for m in i.milestones:
-            by_ms[m].append(i)
     for m in milestones:
-        if m.archived and m.name not in by_ms:
+        group = milestone_group(issues, m.name, parent_child)  # 二重計上の回避はマイルストーンの中だけ
+        if m.archived and not group:
             continue
-        group = by_ms.get(m.name, [])
         done = [i for i in group if is_done(i, done_statuses)]
         s.milestones.append(
             MilestoneProgress(
@@ -165,11 +169,11 @@ def burndown(
     """マイルストーンのバーンダウン. 残量は件数（count）か見積時間（hours）.
 
     実績は、スナップショット（日々の実行で記録した残量）があればそれを、無ければ「完了した課題の最終更新日」を完了日とみなして計算する。
-    親課題と子課題は parent_child（countable）に従って二重に数えない。
+    親課題と子課題は parent_child（countable）に従って、同じマイルストーンの中で二重に数えない（milestone_group）。
     """
     if not (milestone.start and milestone.due):
         return []
-    group = [i for i in countable(issues, parent_child) if milestone.name in i.milestones]
+    group = milestone_group(issues, milestone.name, parent_child)
 
     def weight(i: Issue) -> float:
         return (i.estimated_hours or 0.0) if unit == "hours" else 1.0
