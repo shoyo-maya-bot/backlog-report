@@ -157,7 +157,10 @@ class MockBacklog:
             raise FileNotFoundError(f"モックのデータがありません: {directory / 'issues.json'}")
 
     def _load(self, name: str) -> Any:
-        return json.loads((self.dir / name).read_text(encoding="utf-8"))
+        try:
+            return json.loads((self.dir / name).read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:  # ValueError の仲間だが設定の誤りではない（3）
+            raise BacklogResponseError(f"モックのデータが JSON として読めません: {self.dir / name}（{e}）") from None
 
     def project(self) -> dict[str, Any]:
         return self._load("project.json")
@@ -224,6 +227,27 @@ def to_milestone(raw: dict[str, Any]) -> Milestone:
 
 
 def load_all(port: BacklogPort, tz: str = DEFAULT_TZ) -> tuple[list[Issue], list[Milestone]]:
+    """課題とマイルストーンを読む. データ側の誤り（日付が読めない・必須の項目が無いなど）は BacklogResponseError（実行時エラー＝ 3）.
+
+    ValueError（date.fromisoformat など）のままにすると、CLI が「設定・引数の誤り（2）」と取り違えるため。
+    """
     raw = port.issues()
-    keys = {r["id"]: r["issueKey"] for r in raw if "id" in r}
-    return [to_issue(r, keys, tz) for r in raw], [to_milestone(v) for v in port.versions()]
+    try:
+        keys = {r["id"]: r["issueKey"] for r in raw if "id" in r}
+    except (KeyError, TypeError, AttributeError) as e:
+        raise BacklogResponseError(f"Backlog の課題のデータが読めません（{_reason(e)}）") from None
+    issues = [_parse(lambda r=r: to_issue(r, keys, tz), "課題", r, "issueKey") for r in raw]
+    milestones = [_parse(lambda v=v: to_milestone(v), "マイルストーン", v, "name") for v in port.versions()]
+    return issues, milestones
+
+
+def _reason(e: Exception) -> str:
+    return f"項目 {e} がありません" if isinstance(e, KeyError) else f"{type(e).__name__}: {e}"
+
+
+def _parse(make: Callable[[], Any], what: str, raw: Any, name_key: str) -> Any:
+    try:
+        return make()
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        name = raw.get(name_key, "?") if isinstance(raw, dict) else "?"
+        raise BacklogResponseError(f"Backlog の{what}のデータが読めません（{name}: {_reason(e)}）") from None

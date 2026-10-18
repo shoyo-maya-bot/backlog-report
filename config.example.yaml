@@ -20,6 +20,8 @@ report:
 slack:
   channel: ""                    # Bot トークンで投稿するときのチャンネル ID（例: C0123456789）
   post_log: data/posted.csv      # 送ったものの記録. 同じ日・同じ送り先には二度送らない（送り直すときは batch --force-post）
+  allowed_users: []              # /progress を使える利用者の ID（例: [U0123456789]）。空なら制限しない
+  allowed_channels: []           # /progress を使えるチャンネルの ID（例: [C0123456789]）。空なら制限しない
 
 wiki:
   page: ""                       # 更新する Wiki ページ名（例: 進捗レポート/最新）。空なら更新しない

@@ -58,6 +58,9 @@ class Settings:
     snapshot_file: str = "data/snapshots.csv"
     post_log: str = "data/posted.csv"  # Slack に送ったものの記録（再実行で二重に投稿しないため）
     slack_channel: str = ""
+    # /progress を使える利用者（Slack のユーザー ID）・チャンネル（チャンネル ID）. 空なら制限しない（従来どおり）
+    bot_allowed_users: list[str] = field(default_factory=list)
+    bot_allowed_channels: list[str] = field(default_factory=list)
     wiki_page: str = ""  # 例: 進捗レポート/週次。空なら Wiki は更新しない
     today: date | None = None
     timezone: str = DEFAULT_TZ  # 「今日」と更新日時の日付を決めるタイムゾーン
@@ -117,6 +120,8 @@ def load_settings(path: Path) -> Settings:
         snapshot_file=str(r.get("snapshot_file", "data/snapshots.csv")),
         post_log=str(s.get("post_log", "data/posted.csv") or ""),
         slack_channel=str(s.get("channel", "")),
+        bot_allowed_users=_str_list(s, "slack", "allowed_users", []),
+        bot_allowed_channels=_str_list(s, "slack", "allowed_channels", []),
         wiki_page=str(w.get("page", "") or ""),
         timezone=str(os.environ.get(TZ_ENV) or r.get("timezone") or DEFAULT_TZ),
         raw=data,
