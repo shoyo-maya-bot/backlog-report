@@ -78,3 +78,18 @@ def test_today_or_later_still_records(env: Path):
     assert rc == 0, out
     assert "2026-10-05,フェーズ2 製造," in (env / "data/snapshots.csv").read_text(encoding="utf-8")
     assert "今日より前の日付" not in out
+
+
+def test_future_today_does_not_record(env: Path, monkeypatch: pytest.MonkeyPatch):
+    """未来の日付の記録を作ると、その日になって実際に実行しても送り済み扱いになるため、記録しない."""
+    import backlog_report.infrastructure.slack as slack_mod
+
+    http = FakeSlack()
+    monkeypatch.setattr(slack_mod, "_default_http", http)
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    rc, out = run("-c", str(env / "samples/config.yaml"), "--today", "2026-10-09", "batch", "--slack", "--no-charts")
+    assert rc == 0, out
+    assert (env / "output/report_2026-10-09.md").is_file()  # レポートは作る
+    assert (env / "data/snapshots.csv").read_text(encoding="utf-8") == HEADER + RECORDED  # 未来の日の記録は付けない
+    assert not (env / "samples/data/posted.csv").exists()
+    assert "今日（2026-10-05）より後の日付" in out
