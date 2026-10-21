@@ -9,7 +9,7 @@ backlog:
 report:
   done_statuses: [完了]          # 完了とみなす状態（処理済みも含めるなら [処理済み, 完了]）
   first_status: 未対応           # 未着手とみなす状態（「開始日を過ぎて未着手」とガントの色に使う。状態名を変えたプロジェクト向け）
-  milestones: []                 # 対象のマイルストーン（空ならすべて）
+  milestones: []                 # 対象のマイルストーン（空ならアーカイブ以外のすべて。アーカイブ済みのマイルストーンにしか無い課題も除く）
   due_soon_days: 3               # 期限まで何日以内を「期限間近」とするか
   parent_child: children         # 完了率・バーンダウン・担当者別の残り時間の数え方: children（子課題で数える）/ parents（親課題で数える）/ both（両方）
   output_dir: output             # レポートとグラフの出力先

@@ -43,6 +43,8 @@ def build(
     """レポートを作る. 今日は today → 設定の today → 設定のタイムゾーンでの現在の日付（now. 既定は現在時刻）の順に決める."""
     today = today or st.today or local_today(st.timezone, now)
     issues, milestones = load_all(port, st.timezone)
+    if assignee:
+        _check_assignee(assignee, issues)
     targets = [milestone] if milestone else st.milestones
     if targets:
         unknown = [m for m in targets if m not in {x.name for x in milestones}]
@@ -51,11 +53,27 @@ def build(
         milestones = [m for m in milestones if m.name in targets]
         issues = [i for i in issues if set(i.milestones) & set(targets)]
     else:
-        milestones = [m for m in milestones if not m.archived]  # 終了（アーカイブ）したものは指定したときだけ
+        # 終了（アーカイブ）したマイルストーンは指定したときだけ. その課題（アーカイブ済みのマイルストーンにしか無い課題）も入れない
+        # （以前はマイルストーンだけ外し、課題は期限超過・担当者別・完了率に入っていた）。マイルストーンの無い課題は入れる
+        archived = {m.name for m in milestones if m.archived}
+        milestones = [m for m in milestones if not m.archived]
+        issues = [i for i in issues if not i.milestones or not set(i.milestones) <= archived]
+    warnings: list[str] = []
     if assignee:
         issues = [i for i in issues if i.assignee == assignee]
+        if not issues:
+            warnings.append(f"担当者 {assignee} の課題は、対象のマイルストーンにありません（0 件）")
     s = summarize(issues, milestones, today, st.done_statuses, st.due_soon_days, st.first_status, st.parent_child)
-    return Report(s, st.project_key, issues, milestones)
+    return Report(s, st.project_key, issues, milestones, warnings=warnings)
+
+
+def _check_assignee(assignee: str, issues: list[Issue]) -> None:
+    """どの課題の担当者でもない名前（打ち間違いなど）は ValueError（以前は 0 件中 0 件のレポートを返していた）."""
+    names = sorted({i.assignee for i in issues if i.assignee})
+    if assignee in names:
+        return
+    shown = "、".join(names[:10]) + ("、…" if len(names) > 10 else "")
+    raise ValueError(f"担当者がいません: {assignee}（課題の担当者: {shown or 'なし'}。Backlog の表示名で指定してください）")
 
 
 def write_files(r: Report, st: Settings, out_dir: Path, *, with_charts: bool = True) -> Report:

@@ -10,7 +10,8 @@ backlog.mock_dir を設定すると API の代わりに JSON を読む（試行�
 --today に今日以外の日付（今日より前・今日より後）を指定した batch は、レポートは作るが残量の記録（snapshots.csv）と
 Slack に送った記録（posted.csv）を付けない（その日の記録を今の課題の状態で上書きしない・まだ来ていない日の記録を作らないため）。
 batch --slack --wiki で Slack への投稿が失敗しても、Wiki の更新は行う（そのうえで Slack の失敗の終了コードで終わる）。
-終了コード: 0 正常 / 1 期限超過あり（--fail-on-delay）/ 2 設定・引数の誤り（API キー・プロジェクトキーの誤り＝ Backlog の 401/403/404 を含む）
+終了コード: 0 正常 / 1 期限超過あり（--fail-on-delay）/ 2 設定・引数の誤り（存在しないマイルストーン・担当者、
+API キー・プロジェクトキーの誤り＝ Backlog の 401/403/404 を含む）
 / 3 実行時エラー（API・Slack の失敗など）
 """
 
@@ -103,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
             from ..rendering import text
 
             common_cli.write_output(text.markdown(r.summary, r.project, space_url=st.space_url), args.output)
+            for w in r.warnings:
+                print(f"警告: {w}", file=sys.stderr)
         else:
             r = report.build(port, st)
             report.write_files(r, st, Path(st.output_dir), with_charts=not args.no_charts)
