@@ -11,7 +11,7 @@ Backlog の課題から **進捗レポート** を作り、Slack と Backlog Wik
 
 ## すぐ使う（モックで試す）
 
-API キーが無くても、同梱の架空のデータ（`samples/backlog/`）で試せます。
+API キーが無くても、同梱の架空のデータ（`samples/backlog/`）で試せます。必要なもの: **Python 3.12 以上**（`pyproject.toml` の `requires-python`）と Git。
 
 1. clone する
 2. **Windows**: `setup.cmd` をダブルクリック ／ **macOS・Linux**: `./setup.sh`
@@ -31,12 +31,18 @@ backlog-report -c samples/config.yaml batch --wiki                 # output/ に
 
 | 設定（config.yaml） | 意味 |
 |---|---|
+| `backlog.mock_dir` | API の代わりに読む JSON のフォルダ（試行用。`samples/config.yaml` は `backlog`。相対パスは設定ファイルの場所から） |
 | `report.done_statuses` | 完了とみなす状態（既定: 完了。処理済みも含めるなら `[処理済み, 完了]`。1 つだけなら `完了` と書いてもよい） |
-| `report.milestones` | 対象のマイルストーン（空ならアーカイブ以外のすべて） |
+| `report.milestones` | 対象のマイルストーン（空ならアーカイブ以外のすべて。アーカイブ済みのマイルストーンにしか無い課題も、期限超過・担当者別・完了率に入れない。マイルストーンの無い課題は入れる） |
+| `report.first_status` | 「開始日を過ぎて未着手」とガントの「未着手」の色に使う状態（既定 `未対応`） |
 | `report.due_soon_days` | 何日以内を「期限間近」とするか（既定 3） |
 | `report.timezone` | 「今日」と課題の更新日時の日付を決めるタイムゾーン（既定 `Asia/Tokyo`。環境変数 `BACKLOG_REPORT_TIMEZONE` が優先） |
 | `report.parent_child` | 完了率・バーンダウン・担当者別の残り時間で、親課題・子課題をどう数えるか（下の表。既定 `children`） |
+| `report.output_dir`・`report.snapshot_file` | レポートとグラフの出力先（既定 `output`）、バーンダウンの記録（既定 `data/snapshots.csv`）。相対パスは設定ファイルの場所から |
+| `report.today` | 基準日を固定する（試行・テスト用。`--today` が優先） |
+| `slack.post_log` | Slack に送ったものの記録（既定 `data/posted.csv`。空にすると記録しない） |
 | `slack.channel` | Bot トークンで投稿するチャンネル ID |
+| `slack.allowed_users`・`slack.allowed_channels` | `/progress` を使える利用者・チャンネルの ID（空なら制限しない。下の「Slack」） |
 | `wiki.page` | 上書きする Wiki のページ名（手で編集しても次回の実行で上書きされる） |
 
 API キー・トークンを config.yaml に書くとエラーで止まります（誤ってコミットしないため）。
@@ -74,6 +80,10 @@ API キー・トークンを config.yaml に書くとエラーで止まります
 | ボット（Socket Mode） | 上に加え `SLACK_APP_TOKEN`（connections:write）と、スラッシュコマンド `/progress` の登録 | `/progress`、`/progress マイルストーン名`、`/progress @担当者名`、`/progress … --channel` |
 
 `/progress` の応答は、**既定では打った本人にだけ見えます**（ephemeral）。期限超過の課題名や担当者名をチャンネル全員に出さないためです。
+`--assignee`・`/progress @担当者名` の名前は Backlog の表示名です。どの課題の担当者でもない名前（打ち間違いなど）は、
+0 件のレポートではなく誤り（`report` は終了コード `2`、ボットは本人だけに見えるエラーで候補を表示）にします。
+担当者はいても対象のマイルストーンに課題が無いときは、0 件のレポートに警告を付けます。
+
 チャンネルのみんなに見せるときだけ `--channel` を付けます（例: `/progress "フェーズ2 製造" --channel`）。知らないオプション（`--chanel` など）は
 本人だけに見えるエラーで返します。
 
@@ -145,7 +155,7 @@ Slack に送った記録（`slack.post_log`）は付けません（警告を出�
 |---|---|---|
 | `0` | 正常 | |
 | `1` | 期限超過あり（`--fail-on-delay` のとき） | |
-| `2` | 設定・引数の誤り | API キーが無い・設定ファイルの誤り・Backlog が `401`（API キーが無効）／`403`（権限が無い）／`404`（プロジェクトキー・`space_url` の誤り）を返した |
+| `2` | 設定・引数の誤り | API キーが無い・設定ファイルの誤り・存在しないマイルストーン・担当者の指定・Backlog が `401`（API キーが無効）／`403`（権限が無い）／`404`（プロジェクトキー・`space_url` の誤り）を返した |
 | `3` | 実行時エラー | Backlog の 429・5xx・通信の失敗（再試行しても駄目なとき）・JSON でない応答・課題のデータが読めない（日付の形が違うなど）、Slack の失敗 |
 
 Backlog からの読み取り（GET）は、混雑（429）やサーバーの一時的なエラー（5xx）・通信エラーのとき、少し待って最大 3 回まで再試行します。
