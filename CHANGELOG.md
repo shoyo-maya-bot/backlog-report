@@ -14,6 +14,15 @@
 
 ### 修正
 
+- `batch --today 2026-10-01`（README・この CHANGELOG の書き方）が「unrecognized arguments」で終了コード `2` になっていた
+  （`--today` はサブコマンドの前にしか書けなかった）。`report`・`batch` の後ろにも書けるようにしました（前に書く書き方も使えます）
+- `bot` で `SLACK_BOT_TOKEN`・`SLACK_APP_TOKEN` が無いと実行時エラー（終了コード `3`）、slack_bolt が無いと終了コード `1` になっていた
+  （README では設定の誤り＝ `2`）。接続の前に確かめ、どちらも終了コード `2` にします
+- `setup.sh`・`setup.cmd` が `constraints.txt` を使わずに依存を入れていた（README の「CI と同じ版」と違った）。`-c constraints.txt` で入れます。
+  `setup.cmd` も Python 3.12 以上かを確かめます
+- Excel で開いて保存した BOM 付きの `data/posted.csv` を読むと KeyError（終了コード `3`）になっていた。BOM 付きも読みます（`snapshots.csv` と同じ）
+- `/progress` と `--milestone`・`--assignee` で、空白を含む名前は引用符で囲む必要があることを README と `/progress help` に書きました
+
 - `report.milestones` が空（すべて）のとき、アーカイブ済みのマイルストーンは外していたが、そのマイルストーンにしか無い課題は
   期限超過・担当者別・全体の完了率に入っていた（README の「空ならアーカイブ以外のすべて」と違った）。その課題も入れません
   （マイルストーンの無い課題と、アーカイブ済みと進行中の両方にある課題は入れます。アーカイブ済みのマイルストーンを指定したときは従来どおり）

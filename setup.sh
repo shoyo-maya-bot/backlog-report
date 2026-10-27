@@ -8,7 +8,8 @@ if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null; 
 fi
 python3 -m venv .venv
 .venv/bin/python -m pip install -q --upgrade pip || true
-.venv/bin/python -m pip install -q -e ".[dev,bot]"
+c=""; [ -f constraints.txt ] && c="-c constraints.txt"  # 依存の版を CI と同じにする
+.venv/bin/python -m pip install -q $c -e ".[dev,bot]"
 [ -f config.yaml ] || cp config.example.yaml config.yaml
 [ -f .env ] || cp .env.example .env
 echo "完了: source .venv/bin/activate のあと backlog-report -c samples/config.yaml report（モックで試す）"

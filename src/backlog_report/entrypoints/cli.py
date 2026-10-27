@@ -3,6 +3,7 @@
   backlog-report report                       # その場で確認（online）: Markdown を標準出力へ
   backlog-report report --milestone "v1.0" --assignee "担当A"
   backlog-report batch --slack --wiki         # 定期実行（batch）: ファイル出力・残量の記録・Slack 投稿・Wiki 更新
+  backlog-report batch --today 2026-10-01     # 基準日を指定（--today はサブコマンドの前に書いてもよい）
   backlog-report bot                          # Slack ボット（Socket Mode）: /progress で応答
 
 設定は config.yaml（-c で変更）、秘密情報は .env（BACKLOG_API_KEY・SLACK_BOT_TOKEN など）。
@@ -11,7 +12,7 @@ backlog.mock_dir を設定すると API の代わりに JSON を読む（試行�
 Slack に送った記録（posted.csv）を付けない（その日の記録を今の課題の状態で上書きしない・まだ来ていない日の記録を作らないため）。
 batch --slack --wiki で Slack への投稿が失敗しても、Wiki の更新は行う（そのうえで Slack の失敗の終了コードで終わる）。
 終了コード: 0 正常 / 1 期限超過あり（--fail-on-delay）/ 2 設定・引数の誤り（存在しないマイルストーン・担当者、
-API キー・プロジェクトキーの誤り＝ Backlog の 401/403/404 を含む）
+API キー・プロジェクトキーの誤り＝ Backlog の 401/403/404、bot の SLACK_BOT_TOKEN・SLACK_APP_TOKEN・slack_bolt が無いを含む）
 / 3 実行時エラー（API・Slack の失敗など）
 """
 
@@ -36,12 +37,20 @@ from ..infrastructure.slack import SlackClient
 CONFIG_ERROR_STATUSES = {401: "API キー（BACKLOG_API_KEY）", 403: "API キーの利用者の権限", 404: "backlog.project_key・backlog.space_url"}
 
 
+TODAY_HELP = "基準日（YYYY-MM-DD。既定は今日。サブコマンドの前でも後でも書ける）"
+
+
+def _add_today(sub: argparse.ArgumentParser) -> None:
+    """--today をサブコマンドの後ろ（`batch --today ...`）でも受け付ける. 前に書いた値を既定値で消さないよう SUPPRESS."""
+    sub.add_argument("--today", type=date.fromisoformat, default=argparse.SUPPRESS, help=TODAY_HELP)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="backlog-report", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("-c", "--config", type=Path, default=Path("config.yaml"))
     p.add_argument("--env", type=Path, default=Path(".env"))
-    p.add_argument("--today", type=date.fromisoformat, help="基準日（YYYY-MM-DD。既定は今日）")
+    p.add_argument("--today", type=date.fromisoformat, help=TODAY_HELP)
     p.add_argument("--log-level", default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     sub = p.add_subparsers(dest="command", required=True)
     r = sub.add_parser("report", help="その場でレポートを表示する")
@@ -49,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--assignee", default="")
     r.add_argument("-o", "--output", default="-", help="出力先（既定: 標準出力）")
     r.add_argument("--fail-on-delay", action="store_true")
+    _add_today(r)
     b = sub.add_parser("batch", help="定期実行: ファイル出力・残量の記録・通知")
     b.add_argument("--slack", action="store_true", help="Slack に投稿する")
     b.add_argument("--wiki", action="store_true", help="Backlog Wiki を更新する")
@@ -56,7 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--no-snapshot", action="store_true", help="残量を記録しない")
     b.add_argument("--force-post", action="store_true", help="今日すでに送ったレポートでも Slack に送り直す（既定は送り済みなら飛ばす）")
     b.add_argument("--fail-on-delay", action="store_true")
-    sub.add_parser("bot", help="Slack ボットを起動する（Socket Mode）")
+    _add_today(b)
+    sub.add_parser("bot", help="Slack ボットを起動する（Socket Mode。.env に SLACK_BOT_TOKEN と SLACK_APP_TOKEN が必要）")
     return p
 
 
@@ -95,7 +106,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bot":
         from . import slack_bot
 
-        slack_bot.run(lambda: make_port(st, base), st)
+        try:
+            slack_bot.run(lambda: make_port(st, base), st)
+        except ValueError as e:  # SLACK_BOT_TOKEN・SLACK_APP_TOKEN が無い（設定の誤り＝ 2。以前は 3）
+            raise common_cli.UsageError(str(e)) from None
         return common_cli.ExitCode.OK
 
     try:
