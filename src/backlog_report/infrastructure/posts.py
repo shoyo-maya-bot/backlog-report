@@ -23,7 +23,8 @@ def key(today: date, channel: str, project: str, item: str) -> Key:
 def load(path: Path) -> set[Key]:
     if not path.is_file():
         return set()
-    with path.open(encoding="utf-8", newline="") as fh:
+    # Excel で開いて保存した BOM 付きの CSV も読む（utf-8-sig は BOM を除く。snapshots.csv と同じ）
+    with path.open(encoding="utf-8-sig", newline="") as fh:
         return {(r["date"], r["channel"], r["project"], r["item"]) for r in csv.DictReader(fh)}
 
 

@@ -27,6 +27,7 @@ CHANNEL_FLAG = "--channel"
 DENIED = "このコマンドを使う権限がありません（この利用者・チャンネルは slack.allowed_users / slack.allowed_channels にありません）"
 HELP = (
     "使い方: `/progress`（全体）／ `/progress マイルストーン名`／ `/progress @担当者名`／ `/progress help`\n"
+    '空白を含む名前は引用符で囲みます（例: `/progress "フェーズ2 製造"`、`/progress "@担当 A"`）\n'
     f"応答はあなただけに見えます。チャンネルに出すときは `{CHANNEL_FLAG}` を付けます（例: `/progress マイルストーン名 {CHANNEL_FLAG}`）"
 )
 
@@ -82,13 +83,15 @@ def run(port_factory: Callable[[], BacklogPort], st: Settings, command: str = "/
         from slack_bolt import App
         from slack_bolt.adapter.socket_mode import SocketModeHandler
     except ImportError as e:  # pragma: no cover — 任意の依存
-        raise SystemExit('slack_bolt が必要です: pip install -e ".[bot]"') from e
+        raise ValueError('slack_bolt が必要です: pip install -e ".[bot]"') from e
+    # トークンは接続の前にまとめて確かめる（無ければ ValueError → cli で設定の誤り＝終了コード 2）
+    bot_token, app_token = secret("SLACK_BOT_TOKEN"), secret("SLACK_APP_TOKEN")
     if not st.bot_allowed_users and not st.bot_allowed_channels:
         log.warning(
             "slack.allowed_users / slack.allowed_channels が未設定なので、ワークスペースの誰でも /progress で課題を見られます"
             "（制限するには config.yaml に設定してください）"
         )
-    app = App(token=secret("SLACK_BOT_TOKEN"))
+    app = App(token=bot_token)
 
     @app.command(command)
     def _progress(ack, command, respond):  # pragma: no cover — Slack との結合部
@@ -96,4 +99,4 @@ def run(port_factory: Callable[[], BacklogPort], st: Settings, command: str = "/
         user, channel = command.get("user_id", ""), command.get("channel_id", "")
         respond(handle(command.get("text", ""), port_factory(), st, user_id=user, channel_id=channel))
 
-    SocketModeHandler(app, secret("SLACK_APP_TOKEN")).start()  # pragma: no cover
+    SocketModeHandler(app, app_token).start()  # pragma: no cover
